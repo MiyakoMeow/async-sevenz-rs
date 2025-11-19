@@ -1,15 +1,16 @@
+use std::io::Cursor;
+use std::io::Read;
 #[cfg(feature = "compress")]
 use std::io::{self, Write};
-use std::io::{Cursor, Read};
 
 use crate::{ByteReader, Error};
 use async_compression::futures::bufread::BrotliDecoder as AsyncBrotliDecoder;
 #[cfg(feature = "compress")]
 use async_compression::futures::write::BrotliEncoder as AsyncBrotliEncoder;
-#[cfg(feature = "compress")]
-use futures::io::AsyncWriteExt;
 use futures::io::BufReader as AsyncBufReader;
-use futures::io::{AllowStdIo, AsyncReadExt};
+use futures::io::{AllowStdIo, AsyncReadExt as _};
+#[cfg(feature = "compress")]
+use futures::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 
 /// Magic bytes of a skippable frame format as used in brotli by zstdmt.
 const SKIPPABLE_FRAME_MAGIC: u32 = 0x184D2A50;
@@ -20,15 +21,15 @@ const HINT_UNIT_SIZE: usize = 65536;
 
 /// Custom decoder to support the custom format first implemented by zstdmt, which allows to have
 /// optional skippable frames.
-pub(crate) struct BrotliDecoder<R: Read> {
+pub(crate) struct BrotliDecoder<R: AsyncRead + Unpin> {
     inner: Option<AsyncBrotliDecoder<AsyncBufReader<AllowStdIo<InnerReader<R>>>>>,
     buffer_size: usize,
 }
 
-impl<R: Read> BrotliDecoder<R> {
+impl<R: AsyncRead + Unpin> BrotliDecoder<R> {
     pub(crate) fn new(mut input: R, buffer_size: usize) -> Result<Self, Error> {
         let mut header = [0u8; 16];
-        let header_read = match Read::read(&mut input, &mut header) {
+        let header_read = match async_io::block_on(AsyncReadExt::read(&mut input, &mut header)) {
             Ok(n) if n >= 4 => n,
             Ok(_) => return Err(Error::other("Input too short")),
             Err(e) => return Err(e.into()),
@@ -66,7 +67,7 @@ impl<R: Read> BrotliDecoder<R> {
     }
 }
 
-impl<R: Read> Read for BrotliDecoder<R> {
+impl<R: AsyncRead + Unpin> Read for BrotliDecoder<R> {
     fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
         if let Some(inner) = &mut self.inner {
             match async_io::block_on(AsyncReadExt::read(inner, buf)) {
@@ -96,7 +97,7 @@ impl<R: Read> Read for BrotliDecoder<R> {
     }
 }
 
-enum InnerReader<R: Read> {
+enum InnerReader<R: AsyncRead + Unpin> {
     Empty,
     Standard {
         reader: R,
@@ -110,7 +111,7 @@ enum InnerReader<R: Read> {
     },
 }
 
-impl<R: Read> InnerReader<R> {
+impl<R: AsyncRead + Unpin> InnerReader<R> {
     fn empty() -> Self {
         InnerReader::Empty
     }
@@ -143,26 +144,32 @@ impl<R: Read> InnerReader<R> {
                 if !*frame_finished {
                     return Ok(false);
                 }
-
-                match reader.read_u32() {
-                    Ok(magic) => {
+                let mut buf4 = [0u8; 4];
+                match async_io::block_on(AsyncReadExt::read_exact(reader, &mut buf4)) {
+                    Ok(_) => {
+                        let magic = u32::from_le_bytes(buf4);
                         if magic != SKIPPABLE_FRAME_MAGIC {
                             return Ok(false);
                         }
 
-                        let skippable_size = reader.read_u32()?;
+                        async_io::block_on(AsyncReadExt::read_exact(reader, &mut buf4))?;
+                        let skippable_size = u32::from_le_bytes(buf4);
                         if skippable_size != 8 {
                             return Ok(false);
                         }
 
-                        let compressed_size = reader.read_u32()?;
+                        async_io::block_on(AsyncReadExt::read_exact(reader, &mut buf4))?;
+                        let compressed_size = u32::from_le_bytes(buf4);
 
-                        let brotli_magic = reader.read_u16()?;
+                        let mut buf2 = [0u8; 2];
+                        async_io::block_on(AsyncReadExt::read_exact(reader, &mut buf2))?;
+                        let brotli_magic = u16::from_le_bytes(buf2);
                         if brotli_magic != BROTLI_MAGIC {
                             return Ok(false);
                         }
 
-                        let _uncompressed_hint = reader.read_u16()?;
+                        async_io::block_on(AsyncReadExt::read_exact(reader, &mut buf2))?;
+                        let _uncompressed_hint = u16::from_le_bytes(buf2);
 
                         *remaining_in_frame = compressed_size;
                         *frame_finished = false;
@@ -177,7 +184,7 @@ impl<R: Read> InnerReader<R> {
     }
 }
 
-impl<R: Read> Read for InnerReader<R> {
+impl<R: AsyncRead + Unpin> Read for InnerReader<R> {
     fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
         match self {
             InnerReader::Empty => Ok(0),
@@ -193,7 +200,7 @@ impl<R: Read> Read for InnerReader<R> {
                     }
                     *header_finished = true;
                 }
-                reader.read(buf)
+                async_io::block_on(AsyncReadExt::read(reader, buf))
             }
             InnerReader::Skippable {
                 reader,
@@ -205,7 +212,8 @@ impl<R: Read> Read for InnerReader<R> {
                 }
 
                 let bytes_to_read = std::cmp::min(*remaining_in_frame as usize, buf.len());
-                let bytes_read = reader.read(&mut buf[..bytes_to_read])?;
+                let bytes_read =
+                    async_io::block_on(AsyncReadExt::read(reader, &mut buf[..bytes_to_read]))?;
 
                 if bytes_read == 0 {
                     *frame_finished = true;
@@ -226,7 +234,7 @@ impl<R: Read> Read for InnerReader<R> {
 /// Custom encoder to support the custom format first implemented by zstdmt, which allows to have
 /// optional skippable frames.
 #[cfg(feature = "compress")]
-pub(crate) struct BrotliEncoder<W: Write> {
+pub(crate) struct BrotliEncoder<W: AsyncWrite + Unpin> {
     inner: InnerWriter<W>,
     quality: u32,
     window: u32,
@@ -234,8 +242,8 @@ pub(crate) struct BrotliEncoder<W: Write> {
 }
 
 #[cfg(feature = "compress")]
-enum InnerWriter<W: Write> {
-    Standard(AsyncBrotliEncoder<AllowStdIo<W>>),
+enum InnerWriter<W: AsyncWrite + Unpin> {
+    Standard(AsyncBrotliEncoder<W>),
     Framed {
         writer: W,
         compressor: Option<AsyncBrotliEncoder<AllowStdIo<std::io::Cursor<Vec<u8>>>>>,
@@ -245,7 +253,7 @@ enum InnerWriter<W: Write> {
 }
 
 #[cfg(feature = "compress")]
-impl<W: Write> BrotliEncoder<W> {
+impl<W: AsyncWrite + Unpin> BrotliEncoder<W> {
     pub(crate) fn new(
         writer: W,
         quality: u32,
@@ -255,9 +263,8 @@ impl<W: Write> BrotliEncoder<W> {
         let buffer_size = 8192;
 
         let inner = if frame_size == 0 {
-            let allow = AllowStdIo::new(writer);
             let compressor = AsyncBrotliEncoder::with_quality(
-                allow,
+                writer,
                 async_compression::Level::Precise(quality as i32),
             );
             InnerWriter::Standard(compressor)
@@ -290,16 +297,18 @@ impl<W: Write> BrotliEncoder<W> {
         compressed_data: &[u8],
         uncompressed_bytes: usize,
     ) -> io::Result<()> {
-        use crate::ByteWriter;
-
         if compressed_data.is_empty() {
             return Ok(());
         }
-
-        writer.write_u32(SKIPPABLE_FRAME_MAGIC)?;
-        writer.write_u32(8)?;
-        writer.write_u32(compressed_data.len() as u32)?;
-        writer.write_u16(BROTLI_MAGIC)?;
+        let mut hdr = [0u8; 12];
+        hdr[0..4].copy_from_slice(&SKIPPABLE_FRAME_MAGIC.to_le_bytes());
+        hdr[4..8].copy_from_slice(&(8u32).to_le_bytes());
+        hdr[8..12].copy_from_slice(&(compressed_data.len() as u32).to_le_bytes());
+        async_io::block_on(AsyncWriteExt::write_all(writer, &hdr))?;
+        async_io::block_on(AsyncWriteExt::write_all(
+            writer,
+            &BROTLI_MAGIC.to_le_bytes(),
+        ))?;
 
         let hint_value = uncompressed_bytes.div_ceil(HINT_UNIT_SIZE);
         let hint_value = if hint_value > usize::from(u16::MAX) {
@@ -307,16 +316,16 @@ impl<W: Write> BrotliEncoder<W> {
         } else {
             hint_value as u16
         };
-        writer.write_u16(hint_value)?;
+        async_io::block_on(AsyncWriteExt::write_all(writer, &hint_value.to_le_bytes()))?;
 
-        writer.write_all(compressed_data)?;
+        async_io::block_on(AsyncWriteExt::write_all(writer, compressed_data))?;
 
         Ok(())
     }
 }
 
 #[cfg(feature = "compress")]
-impl<W: Write> Write for BrotliEncoder<W> {
+impl<W: AsyncWrite + Unpin> Write for BrotliEncoder<W> {
     fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
         match &mut self.inner {
             InnerWriter::Standard(compressor) => {
@@ -405,7 +414,7 @@ impl<W: Write> Write for BrotliEncoder<W> {
                     async_compression::Level::Precise(self.quality as i32),
                 ));
 
-                writer.flush()
+                async_io::block_on(AsyncWriteExt::flush(writer))
             }
         }
     }

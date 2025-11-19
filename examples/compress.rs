@@ -54,8 +54,10 @@ fn main() {
 
     let now = Instant::now();
 
-    let mut writer = ArchiveWriter::new(std::io::Cursor::new(Vec::<u8>::new()))
-        .unwrap_or_else(|error| panic!("Failed to create archive '{output_path}': {error}"));
+    let mut writer = ArchiveWriter::new(sevenz_rust2::StdWriteSeekAsAsync::new(
+        std::io::Cursor::new(Vec::<u8>::new()),
+    ))
+    .unwrap_or_else(|error| panic!("Failed to create archive '{output_path}': {error}"));
 
     if solid {
         for file_path in &file_paths {
@@ -72,7 +74,7 @@ fn main() {
     }
 
     let cursor = writer.finish().expect("Failed to finalize archive");
-    let data = cursor.into_inner();
+    let data = cursor.into_inner().into_inner();
     smol::block_on(afs::write(&output_path, data))
         .unwrap_or_else(|error| panic!("Failed to write output file '{output_path}': {error}"));
 

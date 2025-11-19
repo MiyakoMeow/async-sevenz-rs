@@ -1,4 +1,5 @@
-use std::{io::Read, ops::Deref};
+use futures::io::AsyncRead;
+use std::ops::Deref;
 
 pub(crate) struct SeqReader<R> {
     readers: Vec<R>,
@@ -26,19 +27,28 @@ impl<R> SeqReader<R> {
     }
 }
 
-impl<R: Read> Read for SeqReader<R> {
-    fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
-        let mut i = 0;
-        while self.current < self.readers.len() {
-            let r = &mut self.readers[self.current];
-            i = r.read(buf)?;
-            if i == 0 {
-                self.current += 1;
-            } else {
-                break;
+impl<R: AsyncRead + Unpin> AsyncRead for SeqReader<R> {
+    fn poll_read(
+        mut self: std::pin::Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+        buf: &mut [u8],
+    ) -> std::task::Poll<std::io::Result<usize>> {
+        loop {
+            if self.current >= self.readers.len() {
+                return std::task::Poll::Ready(Ok(0));
+            }
+            let cur = self.current;
+            let poll = {
+                let r = &mut self.readers[cur];
+                std::pin::Pin::new(r).poll_read(cx, buf)
+            };
+            match poll {
+                std::task::Poll::Ready(Ok(0)) => {
+                    self.current += 1;
+                    continue;
+                }
+                _ => return poll,
             }
         }
-
-        Ok(i)
     }
 }

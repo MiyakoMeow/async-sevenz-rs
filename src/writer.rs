@@ -6,13 +6,11 @@ mod seq_reader;
 mod source_reader;
 mod unpack_info;
 
-use futures::io::{AllowStdIo, AsyncWrite, AsyncWriteExt};
-use std::{
-    cell::Cell,
-    io::{Read, Seek, Write},
-    rc::Rc,
-    sync::Arc,
+use futures::io::AllowStdIo;
+use futures::io::{
+    AsyncRead, AsyncReadExt, AsyncSeek, AsyncSeekExt, AsyncWrite, AsyncWriteExt, SeekFrom,
 };
+use std::{cell::Cell, io::Write, rc::Rc, sync::Arc};
 
 pub(crate) use counting_writer::CountingWriter;
 use crc32fast::Hasher;
@@ -76,7 +74,7 @@ macro_rules! write_times {
 type Result<T> = std::result::Result<T, Error>;
 
 /// Writes a 7z archive file.
-pub struct ArchiveWriter<W: Write> {
+pub struct ArchiveWriter<W: AsyncWrite + AsyncSeek + Unpin> {
     output: W,
     files: Vec<ArchiveEntry>,
     content_methods: Arc<Vec<EncoderConfiguration>>,
@@ -85,19 +83,23 @@ pub struct ArchiveWriter<W: Write> {
     encrypt_header: bool,
 }
 
-#[cfg(not(target_arch = "wasm32"))]
-impl ArchiveWriter<std::io::Cursor<Vec<u8>>> {
+#[cfg(all(feature = "util", not(target_arch = "wasm32")))]
+impl ArchiveWriter<crate::util::compress::StdWriteSeekAsAsync<std::io::Cursor<Vec<u8>>>> {
     /// Creates an in-memory buffer to write a 7z archive to.
     pub fn create_in_memory() -> Result<Self> {
         let cursor = std::io::Cursor::new(Vec::<u8>::new());
-        Self::new(cursor)
+        let async_cursor = crate::util::compress::StdWriteSeekAsAsync::new(cursor);
+        Self::new(async_cursor)
     }
 }
 
-impl<W: Write + Seek> ArchiveWriter<W> {
+impl<W: AsyncWrite + AsyncSeek + Unpin> ArchiveWriter<W> {
     /// Prepares writer to write a 7z archive to.
     pub fn new(mut writer: W) -> Result<Self> {
-        writer.seek(std::io::SeekFrom::Start(SIGNATURE_HEADER_SIZE))?;
+        async_io::block_on(AsyncSeekExt::seek(
+            &mut writer,
+            SeekFrom::Start(SIGNATURE_HEADER_SIZE),
+        ))?;
 
         Ok(Self {
             output: writer,
@@ -135,19 +137,19 @@ impl<W: Write + Seek> ArchiveWriter<W> {
     /// use std::io::Cursor;
     /// use std::path::Path;
     /// use sevenz_rust2::*;
-    /// let mut sz = ArchiveWriter::new(Cursor::new(Vec::<u8>::new())).expect("create writer ok");
+    /// let mut sz = ArchiveWriter::create_in_memory().expect("create writer ok");
     /// let src = Path::new("path/to/source.txt");
     /// let name = "source.txt".to_string();
     /// let entry = sz
     ///     .push_archive_entry(
     ///         ArchiveEntry::from_path(&src, name),
-    ///         Some(Cursor::new(&b"example"[..])),
+    ///         Some(sevenz_rust2::AsyncStdReadSeek::new(std::io::Cursor::new(&b"example"[..]))),
     ///     )
     ///     .expect("ok");
     /// let compressed_size = entry.compressed_size;
     /// let _cursor = sz.finish().expect("done");
     /// ```
-    pub fn push_archive_entry<R: Read>(
+    pub fn push_archive_entry<R: AsyncRead + Unpin>(
         &mut self,
         mut entry: ArchiveEntry,
         reader: Option<R>,
@@ -155,8 +157,7 @@ impl<W: Write + Seek> ArchiveWriter<W> {
         if !entry.is_directory {
             if let Some(mut r) = reader {
                 let mut compressed_len = 0;
-                let mut compressed =
-                    CompressWrapWriter::new(AllowStdIo::new(&mut self.output), &mut compressed_len);
+                let mut compressed = CompressWrapWriter::new(&mut self.output, &mut compressed_len);
 
                 let mut more_sizes: Vec<Rc<Cell<usize>>> =
                     Vec::with_capacity(self.content_methods.len() - 1);
@@ -171,22 +172,15 @@ impl<W: Write + Seek> ArchiveWriter<W> {
                     let mut w = CompressWrapWriter::new(&mut w, &mut write_len);
                     let mut buf = [0u8; 4096];
                     loop {
-                        match r.read(&mut buf) {
-                            Ok(n) => {
-                                if n == 0 {
-                                    break;
-                                }
-                                Write::write_all(&mut w, &buf[..n]).map_err(|e| {
-                                    Error::io_msg(e, format!("Encode entry:{}", entry.name()))
-                                })?;
-                            }
-                            Err(e) => {
-                                return Err(Error::io_msg(
-                                    e,
-                                    format!("Encode entry:{}", entry.name()),
-                                ));
-                            }
+                        let n = async_io::block_on(AsyncReadExt::read(&mut r, &mut buf)).map_err(
+                            |e| Error::io_msg(e, format!("Encode entry:{}", entry.name())),
+                        )?;
+                        if n == 0 {
+                            break;
                         }
+                        Write::write_all(&mut w, &buf[..n]).map_err(|e| {
+                            Error::io_msg(e, format!("Encode entry:{}", entry.name()))
+                        })?;
                     }
                     Write::flush(&mut w)
                         .map_err(|e| Error::io_msg(e, format!("Encode entry:{}", entry.name())))?;
@@ -228,7 +222,7 @@ impl<W: Write + Seek> ArchiveWriter<W> {
     ///
     /// # Panics
     /// * If `entries`'s length not equals to `reader.reader_len()`
-    pub fn push_archive_entries<R: Read>(
+    pub fn push_archive_entries<R: AsyncRead + Unpin>(
         &mut self,
         entries: Vec<ArchiveEntry>,
         reader: Vec<SourceReader<R>>,
@@ -237,8 +231,7 @@ impl<W: Write + Seek> ArchiveWriter<W> {
         let mut r = SeqReader::new(reader);
         assert_eq!(r.reader_len(), entries.len());
         let mut compressed_len = 0;
-        let mut compressed =
-            CompressWrapWriter::new(AllowStdIo::new(&mut self.output), &mut compressed_len);
+        let mut compressed = CompressWrapWriter::new(&mut self.output, &mut compressed_len);
         let content_methods = &self.content_methods;
         let mut more_sizes: Vec<Rc<Cell<usize>>> = Vec::with_capacity(content_methods.len() - 1);
 
@@ -261,22 +254,15 @@ impl<W: Write + Seek> ArchiveWriter<W> {
             }
 
             loop {
-                match r.read(&mut buf) {
-                    Ok(n) => {
-                        if n == 0 {
-                            break;
-                        }
-                        Write::write_all(&mut w, &buf[..n]).map_err(|e| {
-                            Error::io_msg(e, format!("Encode entries:{}", entries_names(&entries)))
-                        })?;
-                    }
-                    Err(e) => {
-                        return Err(Error::io_msg(
-                            e,
-                            format!("Encode entries:{}", entries_names(&entries)),
-                        ));
-                    }
+                let n = async_io::block_on(AsyncReadExt::read(&mut r, &mut buf)).map_err(|e| {
+                    Error::io_msg(e, format!("Encode entries:{}", entries_names(&entries)))
+                })?;
+                if n == 0 {
+                    break;
                 }
+                Write::write_all(&mut w, &buf[..n]).map_err(|e| {
+                    Error::io_msg(e, format!("Encode entries:{}", entries_names(&entries)))
+                })?;
             }
             Write::flush(&mut w).map_err(|e| {
                 let mut names = String::with_capacity(512);
@@ -353,8 +339,8 @@ impl<W: Write + Seek> ArchiveWriter<W> {
     pub fn finish(mut self) -> std::io::Result<W> {
         let mut header: Vec<u8> = Vec::with_capacity(64 * 1024);
         self.write_encoded_header(&mut header)?;
-        let header_pos = self.output.stream_position()?;
-        self.output.write_all(&header)?;
+        let header_pos = async_io::block_on(AsyncSeekExt::stream_position(&mut self.output))?;
+        async_io::block_on(AsyncWriteExt::write_all(&mut self.output, &header))?;
         let crc32 = crc32fast::hash(&header);
         let mut hh = [0u8; SIGNATURE_HEADER_SIZE as usize];
         {
@@ -375,9 +361,9 @@ impl<W: Write + Seek> ArchiveWriter<W> {
         let crc32 = crc32fast::hash(&hh[12..]);
         hh[8..12].copy_from_slice(&crc32.to_le_bytes());
 
-        self.output.seek(std::io::SeekFrom::Start(0))?;
-        self.output.write_all(&hh)?;
-        self.output.flush()?;
+        async_io::block_on(AsyncSeekExt::seek(&mut self.output, SeekFrom::Start(0)))?;
+        async_io::block_on(AsyncWriteExt::write_all(&mut self.output, &hh))?;
+        async_io::block_on(AsyncWriteExt::flush(&mut self.output))?;
         Ok(self.output)
     }
 
@@ -395,7 +381,7 @@ impl<W: Write + Seek> ArchiveWriter<W> {
         self.write_header(&mut raw_header)?;
         let mut pack_info = PackInfo::default();
 
-        let position = self.output.stream_position()?;
+        let position = async_io::block_on(AsyncSeekExt::stream_position(&mut self.output))?;
         let pos = position - SIGNATURE_HEADER_SIZE;
         pack_info.pos = pos;
 
@@ -437,7 +423,10 @@ impl<W: Write + Seek> ArchiveWriter<W> {
             header.write_all(&raw_header)?;
             return Ok(());
         }
-        self.output.write_all(&encoded_data[..compress_size])?;
+        async_io::block_on(AsyncWriteExt::write_all(
+            &mut self.output,
+            &encoded_data[..compress_size],
+        ))?;
 
         pack_info.add_stream(compress_size as u64, compress_crc);
 
@@ -597,7 +586,7 @@ impl<W: Write + Seek> ArchiveWriter<W> {
     );
 }
 
-impl<W: Write + Seek> AutoFinish for ArchiveWriter<W> {
+impl<W: AsyncWrite + AsyncSeek + Unpin> AutoFinish for ArchiveWriter<W> {
     fn finish_ignore_error(self) {
         let _ = self.finish();
     }

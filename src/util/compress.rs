@@ -1,9 +1,7 @@
 //! 7z Compressor helper functions
 
-use std::{
-    io::{Seek, Write},
-    path::{Path, PathBuf},
-};
+use std::io::{Seek, Write};
+use std::path::{Path, PathBuf};
 
 use async_fs as afs;
 use futures::io::{AsyncSeek, AsyncSeekExt, AsyncWrite, AsyncWriteExt};
@@ -18,12 +16,12 @@ use crate::{ArchiveEntry, ArchiveWriter, EncoderMethod, Error, Password, writer:
 ///
 /// # Arguments
 /// * `src` - Path to the source file or directory to compress
-/// * `dest` - Writer that implements `Write + Seek` to write the compressed archive to
+/// * `dest` - Writer that implements `AsyncWrite + AsyncSeek + Unpin`
 pub async fn compress<W: AsyncWrite + AsyncSeek + Unpin>(
     src: impl AsRef<Path>,
     dest: W,
 ) -> Result<W, Error> {
-    let mut archive_writer = ArchiveWriter::new(AsyncWriteSeekAsStd::new(dest))?;
+    let mut archive_writer = ArchiveWriter::new(dest)?;
     let parent = if src.as_ref().is_dir() {
         src.as_ref()
     } else {
@@ -31,14 +29,14 @@ pub async fn compress<W: AsyncWrite + AsyncSeek + Unpin>(
     };
     compress_path(src.as_ref(), parent, &mut archive_writer).await?;
     let out = archive_writer.finish()?;
-    Ok(out.into_inner())
+    Ok(out)
 }
 
 /// Compresses a source file or directory to a destination writer with password encryption.
 ///
 /// # Arguments
 /// * `src` - Path to the source file or directory to compress
-/// * `dest` - Writer that implements `Write + Seek` to write the compressed archive to
+/// * `dest` - Writer that implements `AsyncWrite + AsyncSeek + Unpin`
 /// * `password` - Password to encrypt the archive with
 #[cfg(feature = "aes256")]
 pub async fn compress_encrypted<W: AsyncWrite + AsyncSeek + Unpin>(
@@ -46,7 +44,7 @@ pub async fn compress_encrypted<W: AsyncWrite + AsyncSeek + Unpin>(
     dest: W,
     password: Password,
 ) -> Result<W, Error> {
-    let mut archive_writer = ArchiveWriter::new(AsyncWriteSeekAsStd::new(dest))?;
+    let mut archive_writer = ArchiveWriter::new(dest)?;
     if !password.is_empty() {
         archive_writer.set_content_methods(vec![
             AesEncoderOptions::new(password).into(),
@@ -60,7 +58,7 @@ pub async fn compress_encrypted<W: AsyncWrite + AsyncSeek + Unpin>(
     };
     compress_path(src.as_ref(), parent, &mut archive_writer).await?;
     let out = archive_writer.finish()?;
-    Ok(out.into_inner())
+    Ok(out)
 }
 
 /// Compresses a source file or directory to a destination file path.
@@ -117,7 +115,7 @@ pub async fn compress_to_path_encrypted(
     Ok(())
 }
 
-async fn compress_path<W: Write + Seek, P: AsRef<Path>>(
+async fn compress_path<W: AsyncWrite + AsyncSeek + Unpin, P: AsRef<Path>>(
     src: P,
     root: &Path,
     archive_writer: &mut ArchiveWriter<W>,
@@ -159,7 +157,7 @@ async fn compress_path<W: Write + Seek, P: AsRef<Path>>(
     Ok(())
 }
 
-impl<W: Write + Seek> ArchiveWriter<W> {
+impl<W: AsyncWrite + AsyncSeek + Unpin> ArchiveWriter<W> {
     /// Adds a source path to the compression builder with a filter function using solid compression.
     ///
     /// The filter function allows selective inclusion of files based on their paths.
@@ -233,7 +231,7 @@ where
 
 const MAX_BLOCK_SIZE: u64 = 4 * 1024 * 1024 * 1024; // 4 GiB
 
-async fn encode_path<W: Write + Seek, Fut>(
+async fn encode_path<W: AsyncWrite + AsyncSeek + Unpin, Fut>(
     solid: bool,
     src: impl AsRef<Path>,
     zip: &mut ArchiveWriter<W>,
@@ -313,12 +311,12 @@ fn extract_file_name(src: &impl AsRef<Path>, ele: &PathBuf) -> Result<String, Er
     }
 }
 
-struct AsyncWriteSeekAsStd<W: AsyncWrite + AsyncSeek + Unpin> {
+pub(crate) struct AsyncWriteSeekAsStd<W: AsyncWrite + AsyncSeek + Unpin> {
     inner: W,
 }
 
 impl<W: AsyncWrite + AsyncSeek + Unpin> AsyncWriteSeekAsStd<W> {
-    fn new(inner: W) -> Self {
+    pub(crate) fn new(inner: W) -> Self {
         Self { inner }
     }
     fn into_inner(self) -> W {
@@ -348,20 +346,20 @@ impl<W: AsyncWrite + AsyncSeek + Unpin> Seek for AsyncWriteSeekAsStd<W> {
     }
 }
 
-struct StdWriteSeekAsAsync<W: Write + Seek> {
+pub struct StdWriteSeekAsAsync<W: std::io::Write + std::io::Seek> {
     inner: W,
 }
 
-impl<W: Write + Seek> StdWriteSeekAsAsync<W> {
-    fn new(inner: W) -> Self {
+impl<W: std::io::Write + std::io::Seek> StdWriteSeekAsAsync<W> {
+    pub fn new(inner: W) -> Self {
         Self { inner }
     }
-    fn into_inner(self) -> W {
+    pub fn into_inner(self) -> W {
         self.inner
     }
 }
 
-impl<W: Write + Seek + Unpin> AsyncWrite for StdWriteSeekAsAsync<W> {
+impl<W: std::io::Write + std::io::Seek + Unpin> AsyncWrite for StdWriteSeekAsAsync<W> {
     fn poll_write(
         self: std::pin::Pin<&mut Self>,
         _cx: &mut std::task::Context<'_>,
@@ -387,7 +385,7 @@ impl<W: Write + Seek + Unpin> AsyncWrite for StdWriteSeekAsAsync<W> {
     }
 }
 
-impl<W: Write + Seek + Unpin> AsyncSeek for StdWriteSeekAsAsync<W> {
+impl<W: std::io::Write + std::io::Seek + Unpin> AsyncSeek for StdWriteSeekAsAsync<W> {
     fn poll_seek(
         self: std::pin::Pin<&mut Self>,
         _cx: &mut std::task::Context<'_>,

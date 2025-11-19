@@ -42,13 +42,13 @@ pub enum Decoder<R: AsyncRead + Unpin> {
     Bcj(AsyncStdRead<BcjReader<AsyncReadSeekAsStd<R>>>),
     Delta(AsyncStdRead<DeltaReader<AsyncReadSeekAsStd<R>>>),
     #[cfg(feature = "brotli")]
-    Brotli(AsyncStdRead<BrotliDecoder<AsyncReadSeekAsStd<R>>>),
+    Brotli(AsyncStdRead<BrotliDecoder<R>>),
     #[cfg(feature = "bzip2")]
     Bzip2(AsyncBzip2Decoder<BufReader<R>>),
     #[cfg(feature = "deflate")]
     Deflate(AsyncDeflateDecoder<BufReader<R>>),
     #[cfg(feature = "lz4")]
-    Lz4(AsyncStdRead<Lz4Decoder<AsyncReadSeekAsStd<R>>>),
+    Lz4(AsyncStdRead<Lz4Decoder<R>>),
     #[cfg(feature = "zstd")]
     Zstd(AsyncZstdDecoder<BufReader<R>>),
     #[cfg(feature = "aes256")]
@@ -200,8 +200,7 @@ pub fn add_decoder<I: AsyncRead + Unpin>(
         }
         #[cfg(feature = "brotli")]
         EncoderMethod::ID_BROTLI => {
-            let std_in = AsyncReadSeekAsStd::new(input);
-            let de = BrotliDecoder::new(std_in, 4096)?;
+            let de = BrotliDecoder::new(input, 4096)?;
             Ok(Decoder::Brotli(AsyncStdRead::new(de)))
         }
         #[cfg(feature = "bzip2")]
@@ -218,8 +217,7 @@ pub fn add_decoder<I: AsyncRead + Unpin>(
         }
         #[cfg(feature = "lz4")]
         EncoderMethod::ID_LZ4 => {
-            let std_in = AsyncReadSeekAsStd::new(input);
-            let de = Lz4Decoder::new(std_in)?;
+            let de = Lz4Decoder::new(input)?;
             Ok(Decoder::Lz4(AsyncStdRead::new(de)))
         }
         #[cfg(feature = "zstd")]

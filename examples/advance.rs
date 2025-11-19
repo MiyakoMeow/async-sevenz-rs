@@ -62,7 +62,9 @@ fn main() {
     assert_eq!(contents.len(), sz.archive().files.len());
     assert_eq!(1, sz.archive().blocks.len());
     sz.for_each_entries(|entry, reader| {
-        let content = std::io::read_to_string(reader)?;
+        let mut buf = Vec::new();
+        async_io::block_on(futures::io::AsyncReadExt::read_to_end(reader, &mut buf))?;
+        let content = String::from_utf8(buf).unwrap();
         assert_eq!(content, contents[entry.name()]);
         Ok(true)
     })

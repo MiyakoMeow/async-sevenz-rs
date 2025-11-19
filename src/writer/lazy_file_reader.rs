@@ -1,7 +1,8 @@
-use std::{io::Read, path::PathBuf};
+use std::path::PathBuf;
 
 use async_fs as afs;
 use async_io::block_on;
+use futures::io::AsyncRead;
 use futures_lite::AsyncReadExt;
 
 pub(crate) struct LazyFileReader {
@@ -20,19 +21,30 @@ impl LazyFileReader {
     }
 }
 
-impl Read for LazyFileReader {
-    fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+impl AsyncRead for LazyFileReader {
+    fn poll_read(
+        mut self: std::pin::Pin<&mut Self>,
+        _cx: &mut std::task::Context<'_>,
+        buf: &mut [u8],
+    ) -> std::task::Poll<std::io::Result<usize>> {
         if self.end {
-            return Ok(0);
+            return std::task::Poll::Ready(Ok(0));
         }
         if self.reader.is_none() {
-            self.reader = Some(block_on(afs::File::open(&self.path))?);
+            match block_on(afs::File::open(&self.path)) {
+                Ok(f) => self.reader = Some(f),
+                Err(e) => return std::task::Poll::Ready(Err(e)),
+            }
         }
-        let n = block_on(self.reader.as_mut().unwrap().read(buf))?;
-        if n == 0 {
-            self.end = true;
-            self.reader = None;
+        match block_on(self.reader.as_mut().unwrap().read(buf)) {
+            Ok(n) => {
+                if n == 0 {
+                    self.end = true;
+                    self.reader = None;
+                }
+                std::task::Poll::Ready(Ok(n))
+            }
+            Err(e) => std::task::Poll::Ready(Err(e)),
         }
-        Ok(n)
     }
 }

@@ -1,4 +1,4 @@
-use std::io::Read;
+use futures::io::AsyncRead;
 
 use crc32fast::Hasher;
 
@@ -19,19 +19,25 @@ impl<R> From<R> for SourceReader<R> {
     }
 }
 
-impl<R: Read> Read for SourceReader<R> {
-    fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
-        let n = self.reader.read(buf)?;
-        if self.crc_value == 0 {
-            if n > 0 {
-                self.size += n;
-                self.crc.update(&buf[..n]);
-            } else {
-                let crc = std::mem::replace(&mut self.crc, Hasher::new());
-                self.crc_value = crc.finalize();
+impl<R: AsyncRead + Unpin> AsyncRead for SourceReader<R> {
+    fn poll_read(
+        mut self: std::pin::Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+        buf: &mut [u8],
+    ) -> std::task::Poll<std::io::Result<usize>> {
+        let poll = std::pin::Pin::new(&mut self.reader).poll_read(cx, buf);
+        if let std::task::Poll::Ready(Ok(n)) = &poll {
+            if self.crc_value == 0 {
+                if *n > 0 {
+                    self.size += *n;
+                    self.crc.update(&buf[..*n]);
+                } else {
+                    let crc = std::mem::replace(&mut self.crc, Hasher::new());
+                    self.crc_value = crc.finalize();
+                }
             }
         }
-        Ok(n)
+        poll
     }
 }
 

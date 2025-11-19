@@ -188,7 +188,10 @@ fn test_compression_method(methods: &[EncoderConfiguration]) {
     let mut bytes = Vec::new();
 
     {
-        let mut writer = ArchiveWriter::new(Cursor::new(&mut bytes)).unwrap();
+        let mut writer = ArchiveWriter::new(sevenz_rust2::StdWriteSeekAsAsync::new(Cursor::new(
+            &mut bytes,
+        )))
+        .unwrap();
         let file = ArchiveEntry::new_file("data/decompress_x86.exe");
         let directory = ArchiveEntry::new_directory("data");
 

@@ -11,7 +11,7 @@ fn main() {
     ))
     .unwrap();
     let data = smol::block_on(afs::read("examples/data/sample.7z")).unwrap();
-    let mut cursor = std::io::Cursor::new(data);
+    let mut cursor = sevenz_rust2::AsyncStdReadSeek::new(std::io::Cursor::new(data));
     let block_count = archive.blocks.len();
     let my_file_name = "7zFormat.txt";
 
@@ -33,13 +33,13 @@ fn main() {
                 if entry.name() == my_file_name {
                     //only extract the file we want
                     let dest = dest.join(entry.name());
-                    let mut ar = futures::io::AllowStdIo::new(reader);
                     async_io::block_on(sevenz_rust2::default_entry_extract_fn_async(
-                        entry, &mut ar, &dest,
+                        entry, reader, &dest,
                     ))?;
                 } else {
                     //skip other files
-                    std::io::copy(reader, &mut std::io::sink())?;
+                    let mut buf = Vec::new();
+                    async_io::block_on(futures::io::AsyncReadExt::read_to_end(reader, &mut buf))?;
                 }
                 Ok(true)
             })

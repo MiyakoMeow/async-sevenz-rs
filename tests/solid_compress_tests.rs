@@ -20,10 +20,13 @@ fn compress_multi_files_solid() {
     }
     let dest = temp_dir.path().join("folder.7z");
 
-    let mut sz = ArchiveWriter::new(std::io::Cursor::new(Vec::<u8>::new())).unwrap();
+    let mut sz = ArchiveWriter::new(sevenz_rust2::StdWriteSeekAsAsync::new(
+        std::io::Cursor::new(Vec::<u8>::new()),
+    ))
+    .unwrap();
     smol::block_on(sz.push_source_path(&folder, |_| async { true })).unwrap();
     let cursor = sz.finish().expect("compress ok");
-    let data = cursor.into_inner();
+    let data = cursor.into_inner().into_inner();
     smol::block_on(async_fs::write(&dest, data)).unwrap();
 
     let decompress_dest = temp_dir.path().join("decompress");
@@ -55,7 +58,10 @@ fn compress_multi_files_mix_solid_and_non_solid() {
     }
     let dest = temp_dir.path().join("folder.7z");
 
-    let mut sz = ArchiveWriter::new(std::io::Cursor::new(Vec::<u8>::new())).unwrap();
+    let mut sz = ArchiveWriter::new(sevenz_rust2::StdWriteSeekAsAsync::new(
+        std::io::Cursor::new(Vec::<u8>::new()),
+    ))
+    .unwrap();
 
     // solid compression
     smol::block_on(sz.push_source_path(&folder, |_| async { true })).unwrap();
@@ -72,13 +78,15 @@ fn compress_multi_files_mix_solid_and_non_solid() {
         let data = smol::block_on(async_fs::read(&src)).unwrap();
         sz.push_archive_entry(
             ArchiveEntry::from_path(&src, name),
-            Some(std::io::Cursor::new(data)),
+            Some(sevenz_rust2::AsyncStdReadSeek::new(std::io::Cursor::new(
+                data,
+            ))),
         )
         .expect("ok");
     }
 
     let cursor = sz.finish().expect("compress ok");
-    let data = cursor.into_inner();
+    let data = cursor.into_inner().into_inner();
     smol::block_on(async_fs::write(&dest, data)).unwrap();
 
     let decompress_dest = temp_dir.path().join("decompress");
