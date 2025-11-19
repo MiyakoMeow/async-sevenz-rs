@@ -44,17 +44,17 @@ ppmd-rust = { version = "1", optional = true }
 lz4_flex = { version = "0.12", optional = true }
 nt-time = { version = "0.12", optional = true }
 sha2 = { version = "0.10", optional = true }
-async-fs = "2.2.0"
-futures-lite = "2.6.1"
-async-io = "2.6.0"
-async-compression = { version = "0.4.33", features = [
+async-fs = "2"
+futures-lite = "2"
+async-io = "2"
+async-compression = { version = "0.4", features = [
     "futures-io",
     "bzip2",
     "deflate",
     "zstd",
 ] }
-futures = "0.3.31"
-blocking = "1.6.2"
+futures = "0.3"
+blocking = "1"
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 js-sys = "0.3"
@@ -62,7 +62,7 @@ wasm-bindgen = "0.2"
 
 [dev-dependencies]
 rand = { version = "0.9" }
-smol = "2.0.2"
+smol = "2"
 tempfile = "3"
 
 [[example]]
