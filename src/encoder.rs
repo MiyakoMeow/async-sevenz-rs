@@ -29,6 +29,12 @@ use crate::{
     encoder_options::{DeltaOptions, EncoderOptions, Lzma2Options, LzmaOptions},
     writer::CountingWriter,
 };
+#[cfg(any(feature = "deflate", feature = "bzip2", feature = "zstd"))]
+use async_compression::Level;
+#[cfg(any(feature = "deflate", feature = "bzip2", feature = "zstd"))]
+use async_compression::futures::write::BzEncoder as AsyncBzip2Encoder;
+#[cfg(any(feature = "deflate", feature = "bzip2", feature = "zstd"))]
+use futures::io::{AllowStdIo, AsyncWriteExt};
 
 pub(crate) enum Encoder<W: Write> {
     Copy(CountingWriter<W>),
@@ -42,13 +48,13 @@ pub(crate) enum Encoder<W: Write> {
     #[cfg(feature = "brotli")]
     Brotli(BrotliEncoder<CountingWriter<W>>),
     #[cfg(feature = "bzip2")]
-    Bzip2(Option<bzip2::write::BzEncoder<CountingWriter<W>>>),
+    Bzip2(Option<AsyncBzip2Encoder<AllowStdIo<CountingWriter<W>>>>),
     #[cfg(feature = "deflate")]
-    Deflate(Option<flate2::write::DeflateEncoder<CountingWriter<W>>>),
+    Deflate(Option<AsyncDeflateEncoder<AllowStdIo<CountingWriter<W>>>>),
     #[cfg(feature = "lz4")]
     Lz4(Option<Lz4Encoder<CountingWriter<W>>>),
     #[cfg(feature = "zstd")]
-    Zstd(Option<zstd::Encoder<'static, CountingWriter<W>>>),
+    Zstd(Option<AsyncZstdEncoder<AllowStdIo<CountingWriter<W>>>>),
     #[cfg(feature = "aes256")]
     Aes(Aes256Sha256Encoder<CountingWriter<W>>),
 }
@@ -116,22 +122,26 @@ impl<W: Write> Write for Encoder<W> {
             #[cfg(feature = "bzip2")]
             Encoder::Bzip2(w) => match buf.is_empty() {
                 true => {
-                    let writer = w.take().unwrap();
-                    let mut inner = writer.finish()?;
+                    let mut writer = w.take().unwrap();
+                    async_io::block_on(writer.close())?;
+                    let allow = writer.into_inner();
+                    let mut inner = allow.into_inner();
                     let _ = inner.write(buf);
                     Ok(0)
                 }
-                false => w.as_mut().unwrap().write(buf),
+                false => async_io::block_on(AsyncWriteExt::write(w.as_mut().unwrap(), buf)),
             },
             #[cfg(feature = "deflate")]
             Encoder::Deflate(w) => match buf.is_empty() {
                 true => {
-                    let writer = w.take().unwrap();
-                    let mut inner = writer.finish()?;
+                    let mut writer = w.take().unwrap();
+                    async_io::block_on(writer.close())?;
+                    let allow = writer.into_inner();
+                    let mut inner = allow.into_inner();
                     let _ = inner.write(buf);
                     Ok(0)
                 }
-                false => w.as_mut().unwrap().write(buf),
+                false => async_io::block_on(AsyncWriteExt::write(w.as_mut().unwrap(), buf)),
             },
             #[cfg(feature = "lz4")]
             Encoder::Lz4(w) => match buf.is_empty() {
@@ -146,12 +156,14 @@ impl<W: Write> Write for Encoder<W> {
             #[cfg(feature = "zstd")]
             Encoder::Zstd(w) => match buf.is_empty() {
                 true => {
-                    let writer = w.take().unwrap();
-                    let mut inner = writer.finish()?;
+                    let mut writer = w.take().unwrap();
+                    async_io::block_on(writer.close())?;
+                    let allow = writer.into_inner();
+                    let mut inner = allow.into_inner();
                     let _ = inner.write(buf);
                     Ok(0)
                 }
-                false => w.as_mut().unwrap().write(buf),
+                false => async_io::block_on(AsyncWriteExt::write(w.as_mut().unwrap(), buf)),
             },
             #[cfg(feature = "aes256")]
             Encoder::Aes(w) => w.write(buf),
@@ -171,13 +183,13 @@ impl<W: Write> Write for Encoder<W> {
             #[cfg(feature = "ppmd")]
             Encoder::Ppmd(w) => w.as_mut().unwrap().flush(),
             #[cfg(feature = "bzip2")]
-            Encoder::Bzip2(w) => w.as_mut().unwrap().flush(),
+            Encoder::Bzip2(w) => async_io::block_on(AsyncWriteExt::flush(w.as_mut().unwrap())),
             #[cfg(feature = "deflate")]
-            Encoder::Deflate(w) => w.as_mut().unwrap().flush(),
+            Encoder::Deflate(w) => async_io::block_on(AsyncWriteExt::flush(w.as_mut().unwrap())),
             #[cfg(feature = "lz4")]
             Encoder::Lz4(w) => w.as_mut().unwrap().flush(),
             #[cfg(feature = "zstd")]
-            Encoder::Zstd(w) => w.as_mut().unwrap().flush(),
+            Encoder::Zstd(w) => async_io::block_on(AsyncWriteExt::flush(w.as_mut().unwrap())),
             #[cfg(feature = "aes256")]
             Encoder::Aes(w) => w.flush(),
         }
@@ -273,10 +285,9 @@ pub(crate) fn add_encoder<W: Write>(
                 Some(EncoderOptions::Bzip2(options)) => options,
                 _ => Bzip2Options::default(),
             };
-
-            let bzip2_encoder =
-                bzip2::write::BzEncoder::new(input, bzip2::Compression::new(options.0));
-
+            let level = Level::Precise(options.0 as i32);
+            let allow = AllowStdIo::new(input);
+            let bzip2_encoder = AsyncBzip2Encoder::with_quality(allow, level);
             Ok(Encoder::Bzip2(Some(bzip2_encoder)))
         }
         #[cfg(feature = "deflate")]
@@ -285,9 +296,9 @@ pub(crate) fn add_encoder<W: Write>(
                 Some(EncoderOptions::Deflate(options)) => options,
                 _ => DeflateOptions::default(),
             };
-
-            let deflate_encoder =
-                flate2::write::DeflateEncoder::new(input, flate2::Compression::new(options.0));
+            let level = Level::Precise(options.0 as i32);
+            let allow = AllowStdIo::new(input);
+            let deflate_encoder = AsyncDeflateEncoder::with_quality(allow, level);
             Ok(Encoder::Deflate(Some(deflate_encoder)))
         }
         #[cfg(feature = "lz4")]
@@ -307,9 +318,9 @@ pub(crate) fn add_encoder<W: Write>(
                 Some(EncoderOptions::Zstd(options)) => *options,
                 _ => ZstandardOptions::default(),
             };
-
-            let zstd_encoder = zstd::Encoder::new(input, options.0 as i32)?;
-
+            let level = Level::Precise(options.0 as i32);
+            let allow = AllowStdIo::new(input);
+            let zstd_encoder = AsyncZstdEncoder::with_quality(allow, level);
             Ok(Encoder::Zstd(Some(zstd_encoder)))
         }
         #[cfg(feature = "aes256")]
@@ -399,15 +410,13 @@ pub(crate) fn get_options_as_properties<'a>(
         }
         #[cfg(feature = "zstd")]
         EncoderMethod::ID_ZSTD => {
-            let version_major = zstd::zstd_safe::VERSION_MAJOR;
-            let version_minor = zstd::zstd_safe::VERSION_MINOR;
             let options = match options {
                 Some(EncoderOptions::Zstd(options)) => *options,
                 _ => ZstandardOptions::default(),
             };
 
-            out[0] = version_major as u8;
-            out[1] = version_minor as u8;
+            out[0] = 1; // Zstd major version
+            out[1] = 0; // Zstd minor version
             out[2] = options.0 as u8;
             &out[0..3]
         }

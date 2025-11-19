@@ -1,9 +1,13 @@
 use std::{io, io::Read};
 
 #[cfg(feature = "bzip2")]
-use bzip2::read::BzDecoder;
+use async_compression::futures::bufread::BzDecoder as AsyncBzip2Decoder;
 #[cfg(feature = "deflate")]
-use flate2::bufread::DeflateDecoder;
+use async_compression::futures::bufread::DeflateDecoder as AsyncDeflateDecoder;
+#[cfg(feature = "zstd")]
+use async_compression::futures::bufread::ZstdDecoder as AsyncZstdDecoder;
+#[cfg(any(feature = "deflate", feature = "bzip2", feature = "zstd"))]
+use futures::io::{AllowStdIo, AsyncReadExt};
 use lzma_rust2::{
     Lzma2Reader, Lzma2ReaderMt, LzmaReader,
     filter::{bcj::BcjReader, delta::DeltaReader},
@@ -34,13 +38,13 @@ pub enum Decoder<R: Read> {
     #[cfg(feature = "brotli")]
     Brotli(Box<BrotliDecoder<R>>),
     #[cfg(feature = "bzip2")]
-    Bzip2(BzDecoder<R>),
+    Bzip2(AsyncStdRead<AsyncBzip2Decoder<AllowStdIo<std::io::BufReader<R>>>>),
     #[cfg(feature = "deflate")]
-    Deflate(DeflateDecoder<std::io::BufReader<R>>),
+    Deflate(AsyncStdRead<AsyncDeflateDecoder<AllowStdIo<std::io::BufReader<R>>>>),
     #[cfg(feature = "lz4")]
     Lz4(Lz4Decoder<R>),
     #[cfg(feature = "zstd")]
-    Zstd(zstd::Decoder<'static, std::io::BufReader<R>>),
+    Zstd(AsyncStdRead<AsyncZstdDecoder<AllowStdIo<std::io::BufReader<R>>>>),
     #[cfg(feature = "aes256")]
     Aes256Sha256(Box<Aes256Sha256Decoder<R>>),
 }
@@ -69,6 +73,25 @@ impl<R: Read> Read for Decoder<R> {
             #[cfg(feature = "aes256")]
             Decoder::Aes256Sha256(r) => r.read(buf),
         }
+    }
+}
+
+#[cfg(any(feature = "deflate", feature = "bzip2", feature = "zstd"))]
+pub(crate) struct AsyncStdRead<D> {
+    inner: D,
+}
+
+#[cfg(any(feature = "deflate", feature = "bzip2", feature = "zstd"))]
+impl<D> AsyncStdRead<D> {
+    fn new(inner: D) -> Self {
+        Self { inner }
+    }
+}
+
+#[cfg(any(feature = "deflate", feature = "bzip2", feature = "zstd"))]
+impl<D: futures::io::AsyncRead + Unpin> Read for AsyncStdRead<D> {
+    fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+        async_io::block_on(self.inner.read(buf))
     }
 }
 
@@ -134,14 +157,17 @@ pub fn add_decoder<I: Read>(
         }
         #[cfg(feature = "bzip2")]
         EncoderMethod::ID_BZIP2 => {
-            let de = BzDecoder::new(input);
-            Ok(Decoder::Bzip2(de))
+            let br = std::io::BufReader::new(input);
+            let allow = AllowStdIo::new(br);
+            let de = AsyncBzip2Decoder::new(allow);
+            Ok(Decoder::Bzip2(AsyncStdRead::new(de)))
         }
         #[cfg(feature = "deflate")]
         EncoderMethod::ID_DEFLATE => {
-            let buf_read = std::io::BufReader::new(input);
-            let de = DeflateDecoder::new(buf_read);
-            Ok(Decoder::Deflate(de))
+            let br = std::io::BufReader::new(input);
+            let allow = AllowStdIo::new(br);
+            let de = AsyncDeflateDecoder::new(allow);
+            Ok(Decoder::Deflate(AsyncStdRead::new(de)))
         }
         #[cfg(feature = "lz4")]
         EncoderMethod::ID_LZ4 => {
@@ -150,8 +176,10 @@ pub fn add_decoder<I: Read>(
         }
         #[cfg(feature = "zstd")]
         EncoderMethod::ID_ZSTD => {
-            let zs = zstd::Decoder::new(input)?;
-            Ok(Decoder::Zstd(zs))
+            let br = std::io::BufReader::new(input);
+            let allow = AllowStdIo::new(br);
+            let zs = AsyncZstdDecoder::new(allow);
+            Ok(Decoder::Zstd(AsyncStdRead::new(zs)))
         }
         EncoderMethod::ID_BCJ_X86 => {
             let de = BcjReader::new_x86(input, 0);
