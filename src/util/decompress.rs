@@ -173,7 +173,7 @@ async fn decompress_path_impl_async(
     password: Password,
     mut extract_fn: impl FnMut(&ArchiveEntry, &mut dyn Read, &PathBuf) -> Result<bool, Error>,
 ) -> Result<(), Error> {
-    let mut seven = ArchiveReader::open(src_path, password)?;
+    let mut seven = ArchiveReader::open_async(src_path, password).await?;
     if !dest.exists() {
         afs::create_dir_all(&dest).await?;
     }

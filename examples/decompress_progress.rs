@@ -1,14 +1,11 @@
-use std::path::PathBuf;
-use smol;
 use sevenz_rust2::Password;
+use std::path::PathBuf;
 
 fn main() {
     let total_size = {
-        let sz = sevenz_rust2::ArchiveReader::open(
-            "examples/data/sample.7z",
-            Password::from("pass"),
-        )
-        .unwrap();
+        let sz =
+            sevenz_rust2::ArchiveReader::open("examples/data/sample.7z", Password::from("pass"))
+                .unwrap();
         sz.archive()
             .files
             .iter()

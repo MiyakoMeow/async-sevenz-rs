@@ -8,6 +8,7 @@ use std::{
     rc::Rc,
 };
 
+use async_fs as afs;
 use crc32fast::Hasher;
 use lzma_rust2::filter::bcj2::Bcj2Reader;
 
@@ -161,6 +162,27 @@ impl Archive {
     ) -> Result<Archive, Error> {
         let mut file = File::open(path)?;
         Self::read(&mut file, password)
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    pub async fn open_async(path: impl AsRef<std::path::Path>) -> Result<Archive, Error> {
+        let data = afs::read(path.as_ref())
+            .await
+            .map_err(|e| Error::file_open(e, path.as_ref().to_string_lossy().to_string()))?;
+        let mut cursor = std::io::Cursor::new(data);
+        Self::read(&mut cursor, &Password::empty())
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    pub async fn open_with_password_async(
+        path: impl AsRef<std::path::Path>,
+        password: &Password,
+    ) -> Result<Archive, Error> {
+        let data = afs::read(path.as_ref())
+            .await
+            .map_err(|e| Error::file_open(e, path.as_ref().to_string_lossy().to_string()))?;
+        let mut cursor = std::io::Cursor::new(data);
+        Self::read(&mut cursor, password)
     }
 
     /// Read 7z file archive info use the specified `reader`.
@@ -1101,6 +1123,20 @@ impl ArchiveReader<File> {
         let file = File::open(path.as_ref())
             .map_err(|e| Error::file_open(e, path.as_ref().to_string_lossy().to_string()))?;
         Self::new(file, password)
+    }
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+impl ArchiveReader<std::io::Cursor<Vec<u8>>> {
+    /// Opens a 7z archive file asynchronously and creates an `ArchiveReader` using an in-memory buffer.
+    pub async fn open_async(
+        path: impl AsRef<std::path::Path>,
+        password: Password,
+    ) -> Result<Self, Error> {
+        let data = afs::read(path.as_ref())
+            .await
+            .map_err(|e| Error::file_open(e, path.as_ref().to_string_lossy().to_string()))?;
+        Self::new(std::io::Cursor::new(data), password)
     }
 }
 
