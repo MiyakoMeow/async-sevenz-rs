@@ -202,7 +202,7 @@ impl Archive {
         let data = afs::read(path.as_ref())
             .await
             .map_err(|e| Error::file_open(e, path.as_ref().to_string_lossy().to_string()))?;
-        let mut cursor = crate::util::decompress::AsyncStdReadSeek::new(std::io::Cursor::new(data));
+        let mut cursor = futures::io::Cursor::new(data);
         Self::read(&mut cursor, &Password::empty())
     }
 
@@ -217,7 +217,7 @@ impl Archive {
         let data = afs::read(path.as_ref())
             .await
             .map_err(|e| Error::file_open(e, path.as_ref().to_string_lossy().to_string()))?;
-        let mut cursor = crate::util::decompress::AsyncStdReadSeek::new(std::io::Cursor::new(data));
+        let mut cursor = futures::io::Cursor::new(data);
         Self::read(&mut cursor, password)
     }
 
@@ -263,8 +263,9 @@ impl Archive {
         }
 
         let start_header_crc = {
-            let mut adapter = crate::util::decompress::AsyncReadSeekAsStd::new(&mut *reader);
-            crate::ByteReader::read_u32(&mut adapter)?
+            let mut buf = [0u8; 4];
+            async_io::block_on(futures::io::AsyncReadExt::read_exact(reader, &mut buf))?;
+            u32::from_le_bytes(buf)
         };
 
         let header_valid = if start_header_crc == 0 {
@@ -365,8 +366,9 @@ impl Archive {
 
             async_io::block_on(AsyncSeekExt::seek(reader, SeekFrom::Start(pos)))?;
             let nid = {
-                let mut adapter = crate::util::decompress::AsyncReadSeekAsStd::new(&mut *reader);
-                crate::ByteReader::read_u8(&mut adapter)?
+                let mut buf = [0u8; 1];
+                async_io::block_on(futures::io::AsyncReadExt::read_exact(reader, &mut buf))?;
+                buf[0]
             };
             if nid == K_ENCODED_HEADER || nid == K_HEADER {
                 let start_header = StartHeader {
@@ -1159,7 +1161,7 @@ pub struct ArchiveReader<R: futures::io::AsyncRead + futures::io::AsyncSeek + Un
 }
 
 #[cfg(not(target_arch = "wasm32"))]
-impl ArchiveReader<crate::util::decompress::AsyncStdReadSeek<std::io::Cursor<Vec<u8>>>> {
+impl ArchiveReader<futures::io::Cursor<Vec<u8>>> {
     /// Opens a 7z archive file asynchronously and creates an `ArchiveReader` using an in-memory buffer.
     pub async fn open_async(
         path: impl AsRef<std::path::Path>,
@@ -1168,20 +1170,14 @@ impl ArchiveReader<crate::util::decompress::AsyncStdReadSeek<std::io::Cursor<Vec
         let data = afs::read(path.as_ref())
             .await
             .map_err(|e| Error::file_open(e, path.as_ref().to_string_lossy().to_string()))?;
-        let cursor = std::io::Cursor::new(data);
-        Self::new(
-            crate::util::decompress::AsyncStdReadSeek::new(cursor),
-            password,
-        )
+        let cursor = futures::io::Cursor::new(data);
+        Self::new(cursor, password)
     }
 
     /// Opens a 7z archive from in-memory bytes asynchronously.
     pub async fn open_from_bytes_async(data: Vec<u8>, password: Password) -> Result<Self, Error> {
-        let cursor = std::io::Cursor::new(data);
-        Self::new(
-            crate::util::decompress::AsyncStdReadSeek::new(cursor),
-            password,
-        )
+        let cursor = futures::io::Cursor::new(data);
+        Self::new(cursor, password)
     }
 }
 

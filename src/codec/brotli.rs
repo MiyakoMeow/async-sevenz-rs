@@ -246,11 +246,7 @@ enum InnerWriter<W: AsyncWrite + Unpin> {
     Standard(AsyncBrotliEncoder<W>),
     Framed {
         writer: W,
-        compressor: Option<
-            AsyncBrotliEncoder<
-                crate::util::compress::StdWriteSeekAsAsync<std::io::Cursor<Vec<u8>>>,
-            >,
-        >,
+        compressor: Option<AsyncBrotliEncoder<futures::io::Cursor<Vec<u8>>>>,
         frame_size: usize,
         uncompressed_bytes_in_frame: usize,
     },
@@ -273,10 +269,9 @@ impl<W: AsyncWrite + Unpin> BrotliEncoder<W> {
             );
             InnerWriter::Standard(compressor)
         } else {
-            let cursor = std::io::Cursor::new(Vec::with_capacity(frame_size));
-            let adapter = crate::util::compress::StdWriteSeekAsAsync::new(cursor);
+            let cursor = futures::io::Cursor::new(Vec::with_capacity(frame_size));
             let compressor = Some(AsyncBrotliEncoder::with_quality(
-                adapter,
+                cursor,
                 async_compression::Level::Precise(quality as i32),
             ));
             InnerWriter::Framed {
@@ -367,16 +362,14 @@ impl<W: AsyncWrite + Unpin> Write for BrotliEncoder<W> {
                     if *uncompressed_bytes_in_frame >= *frame_size {
                         let mut comp = compressor.take().expect("no compressor set");
                         async_io::block_on(comp.close())?;
-                        let adapter = comp.into_inner();
-                        let cursor = adapter.into_inner();
+                        let cursor = comp.into_inner();
                         let data = cursor.into_inner();
 
                         Self::write_frame(writer, &data, *uncompressed_bytes_in_frame)?;
 
-                        let new_cursor = std::io::Cursor::new(Vec::with_capacity(*frame_size));
-                        let adapter = crate::util::compress::StdWriteSeekAsAsync::new(new_cursor);
+                        let new_cursor = futures::io::Cursor::new(Vec::with_capacity(*frame_size));
                         *compressor = Some(AsyncBrotliEncoder::with_quality(
-                            adapter,
+                            new_cursor,
                             async_compression::Level::Precise(self.quality as i32),
                         ));
 
@@ -402,8 +395,7 @@ impl<W: AsyncWrite + Unpin> Write for BrotliEncoder<W> {
             } => {
                 let mut comp = compressor.take().expect("no compressor set");
                 async_io::block_on(comp.close())?;
-                let adapter = comp.into_inner();
-                let cursor = adapter.into_inner();
+                let cursor = comp.into_inner();
                 let data = cursor.into_inner();
 
                 if !data.is_empty() {
@@ -411,10 +403,9 @@ impl<W: AsyncWrite + Unpin> Write for BrotliEncoder<W> {
                     *uncompressed_bytes_in_frame = 0;
                 }
 
-                let new_cursor = std::io::Cursor::new(Vec::with_capacity(*frame_size));
-                let adapter = crate::util::compress::StdWriteSeekAsAsync::new(new_cursor);
+                let new_cursor = futures::io::Cursor::new(Vec::with_capacity(*frame_size));
                 *compressor = Some(AsyncBrotliEncoder::with_quality(
-                    adapter,
+                    new_cursor,
                     async_compression::Level::Precise(self.quality as i32),
                 ));
 

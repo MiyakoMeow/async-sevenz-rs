@@ -32,27 +32,45 @@ use crate::{
     util::decompress::AsyncReadSeekAsStd,
 };
 
+type LzmaBuf<R> = BufReader<futures::io::Chain<Cursor<Vec<u8>>, R>>;
+
+/// 归档数据解码器枚举，根据编码方法选择相应的异步解码器。
+///
+/// 所有变体均实现 `AsyncRead`，可在统一的读取管线中以异步方式解码数据。
 pub enum Decoder<R: AsyncRead + Unpin> {
+    /// 原样读取，不进行任何解码处理。
     Copy(R),
-    Lzma(AsyncLzmaDecoder<BufReader<futures::io::Chain<Cursor<Vec<u8>>, R>>>),
-    Lzma2(AsyncStdRead<Lzma2Reader<AsyncReadSeekAsStd<R>>>),
-    Lzma2Mt(AsyncStdRead<Lzma2ReaderMt<AsyncReadSeekAsStd<R>>>),
+    /// LZMA 算法解码器。
+    Lzma(Box<AsyncLzmaDecoder<LzmaBuf<R>>>),
+    /// LZMA2 算法解码器（单线程）。
+    Lzma2(Box<AsyncStdRead<Lzma2Reader<AsyncReadSeekAsStd<R>>>>),
+    /// LZMA2 算法解码器（多线程）。
+    Lzma2Mt(Box<AsyncStdRead<Lzma2ReaderMt<AsyncReadSeekAsStd<R>>>>),
     #[cfg(feature = "ppmd")]
-    Ppmd(AsyncStdRead<Ppmd7Decoder<AsyncReadSeekAsStd<R>>>),
-    Bcj(AsyncStdRead<BcjReader<AsyncReadSeekAsStd<R>>>),
-    Delta(AsyncStdRead<DeltaReader<AsyncReadSeekAsStd<R>>>),
+    /// PPMd 算法解码器。
+    Ppmd(Box<AsyncStdRead<Ppmd7Decoder<AsyncReadSeekAsStd<R>>>>),
+    /// BCJ 分支转换过滤器解码器（用于可执行指令流）。
+    Bcj(Box<AsyncStdRead<BcjReader<AsyncReadSeekAsStd<R>>>>),
+    /// Delta 过滤器解码器（小幅差值编码）。
+    Delta(Box<AsyncStdRead<DeltaReader<AsyncReadSeekAsStd<R>>>>),
     #[cfg(feature = "brotli")]
-    Brotli(AsyncStdRead<BrotliDecoder<R>>),
+    /// Brotli 算法解码器。
+    Brotli(Box<AsyncStdRead<BrotliDecoder<R>>>),
     #[cfg(feature = "bzip2")]
-    Bzip2(AsyncBzip2Decoder<BufReader<R>>),
+    /// bzip2 算法解码器。
+    Bzip2(Box<AsyncBzip2Decoder<BufReader<R>>>),
     #[cfg(feature = "deflate")]
-    Deflate(AsyncDeflateDecoder<BufReader<R>>),
+    /// deflate 算法解码器。
+    Deflate(Box<AsyncDeflateDecoder<BufReader<R>>>),
     #[cfg(feature = "lz4")]
-    Lz4(AsyncStdRead<Lz4Decoder<R>>),
+    /// LZ4 算法解码器。
+    Lz4(Box<AsyncStdRead<Lz4Decoder<R>>>),
     #[cfg(feature = "zstd")]
-    Zstd(AsyncZstdDecoder<BufReader<R>>),
+    /// Zstd 算法解码器。
+    Zstd(Box<AsyncZstdDecoder<BufReader<R>>>),
     #[cfg(feature = "aes256")]
-    Aes256Sha256(AsyncStdRead<Aes256Sha256Decoder<AsyncReadSeekAsStd<R>>>),
+    /// AES-256-SHA256 加密数据流解码器。
+    Aes256Sha256(Box<AsyncStdRead<Aes256Sha256Decoder<AsyncReadSeekAsStd<R>>>>),
 }
 
 impl<R: AsyncRead + Unpin> AsyncRead for Decoder<R> {
@@ -63,25 +81,25 @@ impl<R: AsyncRead + Unpin> AsyncRead for Decoder<R> {
     ) -> std::task::Poll<std::io::Result<usize>> {
         match &mut *self {
             Decoder::Copy(r) => Pin::new(r).poll_read(cx, buf),
-            Decoder::Lzma(r) => Pin::new(r).poll_read(cx, buf),
-            Decoder::Lzma2(r) => Pin::new(r).poll_read(cx, buf),
-            Decoder::Lzma2Mt(r) => Pin::new(r).poll_read(cx, buf),
+            Decoder::Lzma(r) => Pin::new(r.as_mut()).poll_read(cx, buf),
+            Decoder::Lzma2(r) => Pin::new(r.as_mut()).poll_read(cx, buf),
+            Decoder::Lzma2Mt(r) => Pin::new(r.as_mut()).poll_read(cx, buf),
             #[cfg(feature = "ppmd")]
-            Decoder::Ppmd(r) => Pin::new(r).poll_read(cx, buf),
-            Decoder::Bcj(r) => Pin::new(r).poll_read(cx, buf),
-            Decoder::Delta(r) => Pin::new(r).poll_read(cx, buf),
+            Decoder::Ppmd(r) => Pin::new(r.as_mut()).poll_read(cx, buf),
+            Decoder::Bcj(r) => Pin::new(r.as_mut()).poll_read(cx, buf),
+            Decoder::Delta(r) => Pin::new(r.as_mut()).poll_read(cx, buf),
             #[cfg(feature = "brotli")]
-            Decoder::Brotli(r) => Pin::new(r).poll_read(cx, buf),
+            Decoder::Brotli(r) => Pin::new(r.as_mut()).poll_read(cx, buf),
             #[cfg(feature = "bzip2")]
-            Decoder::Bzip2(r) => Pin::new(r).poll_read(cx, buf),
+            Decoder::Bzip2(r) => Pin::new(r.as_mut()).poll_read(cx, buf),
             #[cfg(feature = "deflate")]
-            Decoder::Deflate(r) => Pin::new(r).poll_read(cx, buf),
+            Decoder::Deflate(r) => Pin::new(r.as_mut()).poll_read(cx, buf),
             #[cfg(feature = "lz4")]
-            Decoder::Lz4(r) => Pin::new(r).poll_read(cx, buf),
+            Decoder::Lz4(r) => Pin::new(r.as_mut()).poll_read(cx, buf),
             #[cfg(feature = "zstd")]
-            Decoder::Zstd(r) => Pin::new(r).poll_read(cx, buf),
+            Decoder::Zstd(r) => Pin::new(r.as_mut()).poll_read(cx, buf),
             #[cfg(feature = "aes256")]
-            Decoder::Aes256Sha256(r) => Pin::new(r).poll_read(cx, buf),
+            Decoder::Aes256Sha256(r) => Pin::new(r.as_mut()).poll_read(cx, buf),
         }
     }
 }
@@ -90,25 +108,25 @@ impl<R: AsyncRead + Unpin> Read for Decoder<R> {
     fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
         match self {
             Decoder::Copy(r) => async_io::block_on(AsyncReadExt::read(r, buf)),
-            Decoder::Lzma(r) => async_io::block_on(AsyncReadExt::read(r, buf)),
-            Decoder::Lzma2(r) => async_io::block_on(AsyncReadExt::read(r, buf)),
-            Decoder::Lzma2Mt(r) => async_io::block_on(AsyncReadExt::read(r, buf)),
+            Decoder::Lzma(r) => async_io::block_on(AsyncReadExt::read(r.as_mut(), buf)),
+            Decoder::Lzma2(r) => async_io::block_on(AsyncReadExt::read(r.as_mut(), buf)),
+            Decoder::Lzma2Mt(r) => async_io::block_on(AsyncReadExt::read(r.as_mut(), buf)),
             #[cfg(feature = "ppmd")]
-            Decoder::Ppmd(r) => async_io::block_on(AsyncReadExt::read(r, buf)),
-            Decoder::Bcj(r) => async_io::block_on(AsyncReadExt::read(r, buf)),
-            Decoder::Delta(r) => async_io::block_on(AsyncReadExt::read(r, buf)),
+            Decoder::Ppmd(r) => async_io::block_on(AsyncReadExt::read(r.as_mut(), buf)),
+            Decoder::Bcj(r) => async_io::block_on(AsyncReadExt::read(r.as_mut(), buf)),
+            Decoder::Delta(r) => async_io::block_on(AsyncReadExt::read(r.as_mut(), buf)),
             #[cfg(feature = "brotli")]
-            Decoder::Brotli(r) => async_io::block_on(AsyncReadExt::read(r, buf)),
+            Decoder::Brotli(r) => async_io::block_on(AsyncReadExt::read(r.as_mut(), buf)),
             #[cfg(feature = "bzip2")]
-            Decoder::Bzip2(r) => async_io::block_on(AsyncReadExt::read(r, buf)),
+            Decoder::Bzip2(r) => async_io::block_on(AsyncReadExt::read(r.as_mut(), buf)),
             #[cfg(feature = "deflate")]
-            Decoder::Deflate(r) => async_io::block_on(AsyncReadExt::read(r, buf)),
+            Decoder::Deflate(r) => async_io::block_on(AsyncReadExt::read(r.as_mut(), buf)),
             #[cfg(feature = "lz4")]
-            Decoder::Lz4(r) => async_io::block_on(AsyncReadExt::read(r, buf)),
+            Decoder::Lz4(r) => async_io::block_on(AsyncReadExt::read(r.as_mut(), buf)),
             #[cfg(feature = "zstd")]
-            Decoder::Zstd(r) => async_io::block_on(AsyncReadExt::read(r, buf)),
+            Decoder::Zstd(r) => async_io::block_on(AsyncReadExt::read(r.as_mut(), buf)),
             #[cfg(feature = "aes256")]
-            Decoder::Aes256Sha256(r) => async_io::block_on(AsyncReadExt::read(r, buf)),
+            Decoder::Aes256Sha256(r) => async_io::block_on(AsyncReadExt::read(r.as_mut(), buf)),
         }
     }
 }
@@ -167,7 +185,7 @@ pub fn add_decoder<I: AsyncRead + Unpin>(
             let chained = AsyncReadExt::chain(header_cursor, input);
             let bufread = BufReader::new(chained);
             let de = AsyncLzmaDecoder::new(bufread);
-            Ok(Decoder::Lzma(de))
+            Ok(Decoder::Lzma(Box::new(de)))
         }
         EncoderMethod::ID_LZMA2 => {
             let dic_size = get_lzma2_dic_size(coder)?;
@@ -181,11 +199,13 @@ pub fn add_decoder<I: AsyncRead + Unpin>(
 
             let std_in = AsyncReadSeekAsStd::new(input);
             let lz = if threads < 2 {
-                Decoder::Lzma2(AsyncStdRead::new(Lzma2Reader::new(std_in, dic_size, None)))
+                Decoder::Lzma2(Box::new(AsyncStdRead::new(Lzma2Reader::new(
+                    std_in, dic_size, None,
+                ))))
             } else {
-                Decoder::Lzma2Mt(AsyncStdRead::new(Lzma2ReaderMt::new(
+                Decoder::Lzma2Mt(Box::new(AsyncStdRead::new(Lzma2ReaderMt::new(
                     std_in, dic_size, None, threads,
-                )))
+                ))))
             };
 
             Ok(lz)
@@ -196,75 +216,75 @@ pub fn add_decoder<I: AsyncRead + Unpin>(
             let std_in = AsyncReadSeekAsStd::new(input);
             let ppmd = Ppmd7Decoder::new(std_in, order, memory_size)
                 .map_err(|err| Error::other(err.to_string()))?;
-            Ok(Decoder::Ppmd(AsyncStdRead::new(ppmd)))
+            Ok(Decoder::Ppmd(Box::new(AsyncStdRead::new(ppmd))))
         }
         #[cfg(feature = "brotli")]
         EncoderMethod::ID_BROTLI => {
             let de = BrotliDecoder::new(input, 4096)?;
-            Ok(Decoder::Brotli(AsyncStdRead::new(de)))
+            Ok(Decoder::Brotli(Box::new(AsyncStdRead::new(de))))
         }
         #[cfg(feature = "bzip2")]
         EncoderMethod::ID_BZIP2 => {
             let br = BufReader::new(input);
             let de = AsyncBzip2Decoder::new(br);
-            Ok(Decoder::Bzip2(de))
+            Ok(Decoder::Bzip2(Box::new(de)))
         }
         #[cfg(feature = "deflate")]
         EncoderMethod::ID_DEFLATE => {
             let br = BufReader::new(input);
             let de = AsyncDeflateDecoder::new(br);
-            Ok(Decoder::Deflate(de))
+            Ok(Decoder::Deflate(Box::new(de)))
         }
         #[cfg(feature = "lz4")]
         EncoderMethod::ID_LZ4 => {
             let de = Lz4Decoder::new(input)?;
-            Ok(Decoder::Lz4(AsyncStdRead::new(de)))
+            Ok(Decoder::Lz4(Box::new(AsyncStdRead::new(de))))
         }
         #[cfg(feature = "zstd")]
         EncoderMethod::ID_ZSTD => {
             let br = BufReader::new(input);
             let zs = AsyncZstdDecoder::new(br);
-            Ok(Decoder::Zstd(zs))
+            Ok(Decoder::Zstd(Box::new(zs)))
         }
         EncoderMethod::ID_BCJ_X86 => {
             let std_in = AsyncReadSeekAsStd::new(input);
             let de = BcjReader::new_x86(std_in, 0);
-            Ok(Decoder::Bcj(AsyncStdRead::new(de)))
+            Ok(Decoder::Bcj(Box::new(AsyncStdRead::new(de))))
         }
         EncoderMethod::ID_BCJ_ARM => {
             let std_in = AsyncReadSeekAsStd::new(input);
             let de = BcjReader::new_arm(std_in, 0);
-            Ok(Decoder::Bcj(AsyncStdRead::new(de)))
+            Ok(Decoder::Bcj(Box::new(AsyncStdRead::new(de))))
         }
         EncoderMethod::ID_BCJ_ARM64 => {
             let std_in = AsyncReadSeekAsStd::new(input);
             let de = BcjReader::new_arm64(std_in, 0);
-            Ok(Decoder::Bcj(AsyncStdRead::new(de)))
+            Ok(Decoder::Bcj(Box::new(AsyncStdRead::new(de))))
         }
         EncoderMethod::ID_BCJ_ARM_THUMB => {
             let std_in = AsyncReadSeekAsStd::new(input);
             let de = BcjReader::new_arm_thumb(std_in, 0);
-            Ok(Decoder::Bcj(AsyncStdRead::new(de)))
+            Ok(Decoder::Bcj(Box::new(AsyncStdRead::new(de))))
         }
         EncoderMethod::ID_BCJ_PPC => {
             let std_in = AsyncReadSeekAsStd::new(input);
             let de = BcjReader::new_ppc(std_in, 0);
-            Ok(Decoder::Bcj(AsyncStdRead::new(de)))
+            Ok(Decoder::Bcj(Box::new(AsyncStdRead::new(de))))
         }
         EncoderMethod::ID_BCJ_IA64 => {
             let std_in = AsyncReadSeekAsStd::new(input);
             let de = BcjReader::new_ia64(std_in, 0);
-            Ok(Decoder::Bcj(AsyncStdRead::new(de)))
+            Ok(Decoder::Bcj(Box::new(AsyncStdRead::new(de))))
         }
         EncoderMethod::ID_BCJ_SPARC => {
             let std_in = AsyncReadSeekAsStd::new(input);
             let de = BcjReader::new_sparc(std_in, 0);
-            Ok(Decoder::Bcj(AsyncStdRead::new(de)))
+            Ok(Decoder::Bcj(Box::new(AsyncStdRead::new(de))))
         }
         EncoderMethod::ID_BCJ_RISCV => {
             let std_in = AsyncReadSeekAsStd::new(input);
             let de = BcjReader::new_riscv(std_in, 0);
-            Ok(Decoder::Bcj(AsyncStdRead::new(de)))
+            Ok(Decoder::Bcj(Box::new(AsyncStdRead::new(de))))
         }
         EncoderMethod::ID_DELTA => {
             let d = if coder.properties.is_empty() {
@@ -274,7 +294,7 @@ pub fn add_decoder<I: AsyncRead + Unpin>(
             };
             let std_in = AsyncReadSeekAsStd::new(input);
             let de = DeltaReader::new(std_in, d as usize);
-            Ok(Decoder::Delta(AsyncStdRead::new(de)))
+            Ok(Decoder::Delta(Box::new(AsyncStdRead::new(de))))
         }
         #[cfg(feature = "aes256")]
         EncoderMethod::ID_AES256_SHA256 => {
@@ -283,7 +303,7 @@ pub fn add_decoder<I: AsyncRead + Unpin>(
             }
             let std_in = AsyncReadSeekAsStd::new(input);
             let de = Aes256Sha256Decoder::new(std_in, &coder.properties, password)?;
-            Ok(Decoder::Aes256Sha256(AsyncStdRead::new(de)))
+            Ok(Decoder::Aes256Sha256(Box::new(AsyncStdRead::new(de))))
         }
         _ => Err(Error::UnsupportedCompressionMethod(
             method.name().to_string(),

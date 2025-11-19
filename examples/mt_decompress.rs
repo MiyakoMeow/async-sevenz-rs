@@ -35,7 +35,7 @@ fn main() {
         let data = data.clone();
 
         let handle = std::thread::spawn(move || {
-            let mut source = sevenz_rust2::AsyncStdReadSeek::new(std::io::Cursor::new(data));
+            let mut source = futures::io::Cursor::new(data);
 
             // 2. For decoders that supports it, we can set the thread_count on the block decoder
             //    so that it uses multiple threads to decode the block. Currently only LZMA2 is

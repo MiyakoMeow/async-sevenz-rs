@@ -257,13 +257,11 @@ impl<W: AsyncWrite + Unpin> Lz4Encoder<W> {
         }
         compressed_data.clear();
 
-        let cursor = std::io::Cursor::new(Vec::new());
-        let adapter = crate::util::compress::StdWriteSeekAsAsync::new(cursor);
-        let mut enc = AsyncLz4Encoder::new(adapter);
+        let cursor = futures::io::Cursor::new(Vec::new());
+        let mut enc = AsyncLz4Encoder::new(cursor);
         async_io::block_on(AsyncWriteExt::write_all(&mut enc, uncompressed_data))?;
         async_io::block_on(enc.close())?;
-        let adapter = enc.into_inner();
-        let cursor = adapter.into_inner();
+        let cursor = enc.into_inner();
         let data = cursor.into_inner();
 
         if data.is_empty() {

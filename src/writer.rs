@@ -83,12 +83,13 @@ pub struct ArchiveWriter<W: AsyncWrite + AsyncSeek + Unpin> {
 }
 
 #[cfg(all(feature = "util", not(target_arch = "wasm32")))]
-impl ArchiveWriter<crate::util::compress::StdWriteSeekAsAsync<std::io::Cursor<Vec<u8>>>> {
-    /// Creates an in-memory buffer to write a 7z archive to.
+impl ArchiveWriter<futures::io::Cursor<Vec<u8>>> {
+    /// 创建一个基于内存缓冲的 7z 写入器。
+    ///
+    /// 返回使用 `Vec<u8>` 作为底层存储的 `ArchiveWriter`，适合测试或无需落盘的场景。
     pub fn create_in_memory() -> Result<Self> {
-        let cursor = std::io::Cursor::new(Vec::<u8>::new());
-        let async_cursor = crate::util::compress::StdWriteSeekAsAsync::new(cursor);
-        Self::new(async_cursor)
+        let cursor = futures::io::Cursor::new(Vec::<u8>::new());
+        Self::new(cursor)
     }
 }
 
@@ -142,7 +143,7 @@ impl<W: AsyncWrite + AsyncSeek + Unpin> ArchiveWriter<W> {
     /// let entry = sz
     ///     .push_archive_entry(
     ///         ArchiveEntry::from_path(&src, name),
-    ///         Some(sevenz_rust2::AsyncStdReadSeek::new(std::io::Cursor::new(&b"example"[..]))),
+    ///         Some(futures::io::Cursor::new(&b"example"[..])),
     ///     )
     ///     .expect("ok");
     /// let compressed_size = entry.compressed_size;
@@ -402,13 +403,10 @@ impl<W: AsyncWrite + AsyncSeek + Unpin> ArchiveWriter<W> {
 
         let methods = Arc::new(methods);
 
-        let mut encoded_cursor = std::io::Cursor::new(Vec::with_capacity(size as usize / 2));
+        let mut encoded_cursor = futures::io::Cursor::new(Vec::with_capacity(size as usize / 2));
 
         let mut compress_size = 0;
-        let mut compressed = CompressWrapWriter::new(
-            crate::util::compress::StdWriteSeekAsAsync::new(&mut encoded_cursor),
-            &mut compress_size,
-        );
+        let mut compressed = CompressWrapWriter::new(&mut encoded_cursor, &mut compress_size);
         {
             let mut encoder = Self::create_writer(&methods, &mut compressed, &mut more_sizes)
                 .map_err(std::io::Error::other)?;

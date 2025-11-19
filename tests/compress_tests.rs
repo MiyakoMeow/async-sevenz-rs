@@ -2,7 +2,7 @@
 use std::{
     fs::File,
     hash::{Hash, Hasher},
-    io::{Cursor, Read},
+    io::Read,
 };
 
 #[cfg(all(feature = "compress", feature = "util"))]
@@ -185,13 +185,10 @@ fn test_compression_method(methods: &[EncoderConfiguration]) {
         .read_to_end(&mut content)
         .unwrap();
 
-    let mut bytes = Vec::new();
+    let bytes: Vec<u8>;
 
     {
-        let mut writer = ArchiveWriter::new(sevenz_rust2::StdWriteSeekAsAsync::new(Cursor::new(
-            &mut bytes,
-        )))
-        .unwrap();
+        let mut writer = ArchiveWriter::new(futures::io::Cursor::new(Vec::<u8>::new())).unwrap();
         let file = ArchiveEntry::new_file("data/decompress_x86.exe");
         let directory = ArchiveEntry::new_directory("data");
 
@@ -200,7 +197,8 @@ fn test_compression_method(methods: &[EncoderConfiguration]) {
             .push_archive_entry(file, Some(content.as_slice()))
             .unwrap();
         writer.push_archive_entry::<&[u8]>(directory, None).unwrap();
-        writer.finish().unwrap();
+        let cursor = writer.finish().unwrap();
+        bytes = cursor.into_inner();
     }
 
     let mut reader = smol::block_on(ArchiveReader::open_from_bytes_async(

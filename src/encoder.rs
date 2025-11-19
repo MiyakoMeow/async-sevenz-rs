@@ -45,27 +45,30 @@ use async_compression::futures::write::LzmaEncoder as AsyncLzmaEncoder;
 use async_compression::futures::write::ZstdEncoder as AsyncZstdEncoder;
 use futures::io::{AsyncWrite, AsyncWriteExt};
 
+/// 归档数据编码器枚举，根据配置选择相应的异步编码器进行写入。
+///
+/// 所有变体实现同步 `Write` 接口以便编码链路统一透传；内部实际写入由异步编码器完成。
 pub(crate) enum Encoder<W: AsyncWrite + Unpin> {
     Copy(CountingWriter<W>),
-    Bcj(Option<BcjWriter<CountingWriter<W>>>),
-    Delta(DeltaWriter<CountingWriter<W>>),
-    Lzma(Option<LzmaEnc<W>>),
-    Lzma2(Option<Lzma2Writer<CountingWriter<W>>>),
-    Lzma2Mt(Option<Lzma2WriterMt<CountingWriter<W>>>),
+    Bcj(Option<Box<BcjWriter<CountingWriter<W>>>>),
+    Delta(Box<DeltaWriter<CountingWriter<W>>>),
+    Lzma(Option<Box<LzmaEnc<W>>>),
+    Lzma2(Option<Box<Lzma2Writer<CountingWriter<W>>>>),
+    Lzma2Mt(Option<Box<Lzma2WriterMt<CountingWriter<W>>>>),
     #[cfg(feature = "ppmd")]
     Ppmd(Option<Box<ppmd_rust::Ppmd7Encoder<CountingWriter<W>>>>),
     #[cfg(feature = "brotli")]
-    Brotli(BrotliEncoder<CountingWriter<W>>),
+    Brotli(Box<BrotliEncoder<CountingWriter<W>>>),
     #[cfg(feature = "bzip2")]
-    Bzip2(Option<AsyncBzip2Encoder<CountingWriter<W>>>),
+    Bzip2(Option<Box<AsyncBzip2Encoder<CountingWriter<W>>>>),
     #[cfg(feature = "deflate")]
-    Deflate(Option<AsyncDeflateEncoder<CountingWriter<W>>>),
+    Deflate(Option<Box<AsyncDeflateEncoder<CountingWriter<W>>>>),
     #[cfg(feature = "lz4")]
-    Lz4(Option<Lz4Encoder<CountingWriter<W>>>),
+    Lz4(Option<Box<Lz4Encoder<CountingWriter<W>>>>),
     #[cfg(feature = "zstd")]
-    Zstd(Option<AsyncZstdEncoder<CountingWriter<W>>>),
+    Zstd(Option<Box<AsyncZstdEncoder<CountingWriter<W>>>>),
     #[cfg(feature = "aes256")]
-    Aes(Aes256Sha256Encoder<CountingWriter<W>>),
+    Aes(Box<Aes256Sha256Encoder<CountingWriter<W>>>),
 }
 type LzmaEnc<W> = AsyncLzmaEncoder<StripLzmaHeaderWrite<CountingWriter<W>>>;
 
@@ -122,7 +125,7 @@ impl<W: AsyncWrite + Unpin> Write for Encoder<W> {
         // dispatch based approach to work.
         match self {
             Encoder::Copy(w) => std::io::Write::write(w, buf),
-            Encoder::Delta(w) => w.write(buf),
+            Encoder::Delta(w) => w.as_mut().write(buf),
             Encoder::Bcj(w) => match buf.is_empty() {
                 true => {
                     let writer = w.take().unwrap();
@@ -130,7 +133,7 @@ impl<W: AsyncWrite + Unpin> Write for Encoder<W> {
                     std::io::Write::write(&mut inner, buf)?;
                     Ok(0)
                 }
-                false => std::io::Write::write(w.as_mut().unwrap(), buf),
+                false => std::io::Write::write(w.as_mut().unwrap().as_mut(), buf),
             },
             Encoder::Lzma(w) => match buf.is_empty() {
                 true => {
@@ -141,7 +144,9 @@ impl<W: AsyncWrite + Unpin> Write for Encoder<W> {
                     let _ = std::io::Write::write(&mut inner, buf);
                     Ok(0)
                 }
-                false => async_io::block_on(AsyncWriteExt::write(w.as_mut().unwrap(), buf)),
+                false => {
+                    async_io::block_on(AsyncWriteExt::write(w.as_mut().unwrap().as_mut(), buf))
+                }
             },
             Encoder::Lzma2(w) => match buf.is_empty() {
                 true => {
@@ -150,7 +155,7 @@ impl<W: AsyncWrite + Unpin> Write for Encoder<W> {
                     let _ = std::io::Write::write(&mut inner, buf);
                     Ok(0)
                 }
-                false => std::io::Write::write(w.as_mut().unwrap(), buf),
+                false => std::io::Write::write(w.as_mut().unwrap().as_mut(), buf),
             },
             Encoder::Lzma2Mt(w) => match buf.is_empty() {
                 true => {
@@ -159,7 +164,7 @@ impl<W: AsyncWrite + Unpin> Write for Encoder<W> {
                     let _ = std::io::Write::write(&mut inner, buf);
                     Ok(0)
                 }
-                false => std::io::Write::write(w.as_mut().unwrap(), buf),
+                false => std::io::Write::write(w.as_mut().unwrap().as_mut(), buf),
             },
             #[cfg(feature = "ppmd")]
             Encoder::Ppmd(w) => match buf.is_empty() {
@@ -173,7 +178,7 @@ impl<W: AsyncWrite + Unpin> Write for Encoder<W> {
             },
             // TODO: Also add a proper "finish" method here.
             #[cfg(feature = "brotli")]
-            Encoder::Brotli(w) => std::io::Write::write(w, buf),
+            Encoder::Brotli(w) => std::io::Write::write(w.as_mut(), buf),
             #[cfg(feature = "bzip2")]
             Encoder::Bzip2(w) => match buf.is_empty() {
                 true => {
@@ -183,7 +188,9 @@ impl<W: AsyncWrite + Unpin> Write for Encoder<W> {
                     let _ = std::io::Write::write(&mut inner, buf);
                     Ok(0)
                 }
-                false => async_io::block_on(AsyncWriteExt::write(w.as_mut().unwrap(), buf)),
+                false => {
+                    async_io::block_on(AsyncWriteExt::write(w.as_mut().unwrap().as_mut(), buf))
+                }
             },
             #[cfg(feature = "deflate")]
             Encoder::Deflate(w) => match buf.is_empty() {
@@ -194,7 +201,9 @@ impl<W: AsyncWrite + Unpin> Write for Encoder<W> {
                     let _ = std::io::Write::write(&mut inner, buf);
                     Ok(0)
                 }
-                false => async_io::block_on(AsyncWriteExt::write(w.as_mut().unwrap(), buf)),
+                false => {
+                    async_io::block_on(AsyncWriteExt::write(w.as_mut().unwrap().as_mut(), buf))
+                }
             },
             #[cfg(feature = "lz4")]
             Encoder::Lz4(w) => match buf.is_empty() {
@@ -204,7 +213,7 @@ impl<W: AsyncWrite + Unpin> Write for Encoder<W> {
                     let _ = std::io::Write::write(&mut inner, buf);
                     Ok(0)
                 }
-                false => w.as_mut().unwrap().write(buf),
+                false => w.as_mut().unwrap().as_mut().write(buf),
             },
             #[cfg(feature = "zstd")]
             Encoder::Zstd(w) => match buf.is_empty() {
@@ -215,10 +224,12 @@ impl<W: AsyncWrite + Unpin> Write for Encoder<W> {
                     let _ = std::io::Write::write(&mut inner, buf);
                     Ok(0)
                 }
-                false => async_io::block_on(AsyncWriteExt::write(w.as_mut().unwrap(), buf)),
+                false => {
+                    async_io::block_on(AsyncWriteExt::write(w.as_mut().unwrap().as_mut(), buf))
+                }
             },
             #[cfg(feature = "aes256")]
-            Encoder::Aes(w) => std::io::Write::write(w, buf),
+            Encoder::Aes(w) => std::io::Write::write(w.as_mut(), buf),
         }
     }
 
@@ -226,24 +237,32 @@ impl<W: AsyncWrite + Unpin> Write for Encoder<W> {
         match self {
             Encoder::Copy(w) => std::io::Write::flush(w),
             Encoder::Bcj(w) => w.as_mut().unwrap().flush(),
-            Encoder::Delta(w) => std::io::Write::flush(w),
-            Encoder::Lzma(w) => async_io::block_on(AsyncWriteExt::flush(w.as_mut().unwrap())),
-            Encoder::Lzma2(w) => w.as_mut().unwrap().flush(),
-            Encoder::Lzma2Mt(w) => w.as_mut().unwrap().flush(),
+            Encoder::Delta(w) => std::io::Write::flush(w.as_mut()),
+            Encoder::Lzma(w) => {
+                async_io::block_on(AsyncWriteExt::flush(w.as_mut().unwrap().as_mut()))
+            }
+            Encoder::Lzma2(w) => w.as_mut().unwrap().as_mut().flush(),
+            Encoder::Lzma2Mt(w) => w.as_mut().unwrap().as_mut().flush(),
             #[cfg(feature = "brotli")]
-            Encoder::Brotli(w) => std::io::Write::flush(w),
+            Encoder::Brotli(w) => std::io::Write::flush(w.as_mut()),
             #[cfg(feature = "ppmd")]
-            Encoder::Ppmd(w) => std::io::Write::flush(w.as_mut().unwrap()),
+            Encoder::Ppmd(w) => std::io::Write::flush(w.as_mut().unwrap().as_mut()),
             #[cfg(feature = "bzip2")]
-            Encoder::Bzip2(w) => async_io::block_on(AsyncWriteExt::flush(w.as_mut().unwrap())),
+            Encoder::Bzip2(w) => {
+                async_io::block_on(AsyncWriteExt::flush(w.as_mut().unwrap().as_mut()))
+            }
             #[cfg(feature = "deflate")]
-            Encoder::Deflate(w) => async_io::block_on(AsyncWriteExt::flush(w.as_mut().unwrap())),
+            Encoder::Deflate(w) => {
+                async_io::block_on(AsyncWriteExt::flush(w.as_mut().unwrap().as_mut()))
+            }
             #[cfg(feature = "lz4")]
-            Encoder::Lz4(w) => std::io::Write::flush(w.as_mut().unwrap()),
+            Encoder::Lz4(w) => std::io::Write::flush(w.as_mut().unwrap().as_mut()),
             #[cfg(feature = "zstd")]
-            Encoder::Zstd(w) => async_io::block_on(AsyncWriteExt::flush(w.as_mut().unwrap())),
+            Encoder::Zstd(w) => {
+                async_io::block_on(AsyncWriteExt::flush(w.as_mut().unwrap().as_mut()))
+            }
             #[cfg(feature = "aes256")]
-            Encoder::Aes(w) => std::io::Write::flush(w),
+            Encoder::Aes(w) => std::io::Write::flush(w.as_mut()),
         }
     }
 }
@@ -281,18 +300,26 @@ pub(crate) fn add_encoder<W: AsyncWrite + Unpin>(
                 _ => DeltaOptions::default(),
             };
             let dw = DeltaWriter::new(input, options.0 as usize);
-            Ok(Encoder::Delta(dw))
+            Ok(Encoder::Delta(Box::new(dw)))
         }
-        EncoderMethod::ID_BCJ_X86 => Ok(Encoder::Bcj(Some(BcjWriter::new_x86(input, 0)))),
-        EncoderMethod::ID_BCJ_ARM => Ok(Encoder::Bcj(Some(BcjWriter::new_arm(input, 0)))),
-        EncoderMethod::ID_BCJ_ARM_THUMB => {
-            Ok(Encoder::Bcj(Some(BcjWriter::new_arm_thumb(input, 0))))
+        EncoderMethod::ID_BCJ_X86 => Ok(Encoder::Bcj(Some(Box::new(BcjWriter::new_x86(input, 0))))),
+        EncoderMethod::ID_BCJ_ARM => Ok(Encoder::Bcj(Some(Box::new(BcjWriter::new_arm(input, 0))))),
+        EncoderMethod::ID_BCJ_ARM_THUMB => Ok(Encoder::Bcj(Some(Box::new(
+            BcjWriter::new_arm_thumb(input, 0),
+        )))),
+        EncoderMethod::ID_BCJ_ARM64 => {
+            Ok(Encoder::Bcj(Some(Box::new(BcjWriter::new_arm64(input, 0)))))
         }
-        EncoderMethod::ID_BCJ_ARM64 => Ok(Encoder::Bcj(Some(BcjWriter::new_arm64(input, 0)))),
-        EncoderMethod::ID_BCJ_IA64 => Ok(Encoder::Bcj(Some(BcjWriter::new_ia64(input, 0)))),
-        EncoderMethod::ID_BCJ_SPARC => Ok(Encoder::Bcj(Some(BcjWriter::new_sparc(input, 0)))),
-        EncoderMethod::ID_BCJ_PPC => Ok(Encoder::Bcj(Some(BcjWriter::new_ppc(input, 0)))),
-        EncoderMethod::ID_BCJ_RISCV => Ok(Encoder::Bcj(Some(BcjWriter::new_riscv(input, 0)))),
+        EncoderMethod::ID_BCJ_IA64 => {
+            Ok(Encoder::Bcj(Some(Box::new(BcjWriter::new_ia64(input, 0)))))
+        }
+        EncoderMethod::ID_BCJ_SPARC => {
+            Ok(Encoder::Bcj(Some(Box::new(BcjWriter::new_sparc(input, 0)))))
+        }
+        EncoderMethod::ID_BCJ_PPC => Ok(Encoder::Bcj(Some(Box::new(BcjWriter::new_ppc(input, 0))))),
+        EncoderMethod::ID_BCJ_RISCV => {
+            Ok(Encoder::Bcj(Some(Box::new(BcjWriter::new_riscv(input, 0)))))
+        }
         EncoderMethod::ID_LZMA => {
             let _options = match &method_config.options {
                 Some(EncoderOptions::Lzma(options)) => options.clone(),
@@ -300,7 +327,7 @@ pub(crate) fn add_encoder<W: AsyncWrite + Unpin>(
             };
             let strip = StripLzmaHeaderWrite::new(input);
             let enc = AsyncLzmaEncoder::new(strip);
-            Ok(Encoder::Lzma(Some(enc)))
+            Ok(Encoder::Lzma(Some(Box::new(enc))))
         }
         EncoderMethod::ID_LZMA2 => {
             let lzma2_options = match &method_config.options {
@@ -309,14 +336,17 @@ pub(crate) fn add_encoder<W: AsyncWrite + Unpin>(
             };
 
             let encoder = match lzma2_options.threads {
-                0 | 1 => Encoder::Lzma2(Some(Lzma2Writer::new(input, lzma2_options.options))),
+                0 | 1 => Encoder::Lzma2(Some(Box::new(Lzma2Writer::new(
+                    input,
+                    lzma2_options.options,
+                )))),
                 _ => {
                     let threads = lzma2_options.threads;
-                    Encoder::Lzma2Mt(Some(Lzma2WriterMt::new(
+                    Encoder::Lzma2Mt(Some(Box::new(Lzma2WriterMt::new(
                         input,
                         lzma2_options.options,
                         threads,
-                    )?))
+                    )?)))
                 }
             };
 
@@ -349,7 +379,7 @@ pub(crate) fn add_encoder<W: AsyncWrite + Unpin>(
                 options.skippable_frame_size as usize,
             )?;
 
-            Ok(Encoder::Brotli(brotli_encoder))
+            Ok(Encoder::Brotli(Box::new(brotli_encoder)))
         }
         #[cfg(feature = "bzip2")]
         EncoderMethod::ID_BZIP2 => {
@@ -359,7 +389,7 @@ pub(crate) fn add_encoder<W: AsyncWrite + Unpin>(
             };
             let level = Level::Precise(options.0 as i32);
             let bzip2_encoder = AsyncBzip2Encoder::with_quality(input, level);
-            Ok(Encoder::Bzip2(Some(bzip2_encoder)))
+            Ok(Encoder::Bzip2(Some(Box::new(bzip2_encoder))))
         }
         #[cfg(feature = "deflate")]
         EncoderMethod::ID_DEFLATE => {
@@ -369,7 +399,7 @@ pub(crate) fn add_encoder<W: AsyncWrite + Unpin>(
             };
             let level = Level::Precise(options.0 as i32);
             let deflate_encoder = AsyncDeflateEncoder::with_quality(input, level);
-            Ok(Encoder::Deflate(Some(deflate_encoder)))
+            Ok(Encoder::Deflate(Some(Box::new(deflate_encoder))))
         }
         #[cfg(feature = "lz4")]
         EncoderMethod::ID_LZ4 => {
@@ -380,7 +410,7 @@ pub(crate) fn add_encoder<W: AsyncWrite + Unpin>(
 
             let lz4_encoder = Lz4Encoder::new(input, options.skippable_frame_size as usize)?;
 
-            Ok(Encoder::Lz4(Some(lz4_encoder)))
+            Ok(Encoder::Lz4(Some(Box::new(lz4_encoder))))
         }
         #[cfg(feature = "zstd")]
         EncoderMethod::ID_ZSTD => {
@@ -390,7 +420,7 @@ pub(crate) fn add_encoder<W: AsyncWrite + Unpin>(
             };
             let level = Level::Precise(options.0 as i32);
             let zstd_encoder = AsyncZstdEncoder::with_quality(input, level);
-            Ok(Encoder::Zstd(Some(zstd_encoder)))
+            Ok(Encoder::Zstd(Some(Box::new(zstd_encoder))))
         }
         #[cfg(feature = "aes256")]
         EncoderMethod::ID_AES256_SHA256 => {
@@ -398,7 +428,9 @@ pub(crate) fn add_encoder<W: AsyncWrite + Unpin>(
                 Some(EncoderOptions::Aes(p)) => p,
                 _ => return Err(Error::PasswordRequired),
             };
-            Ok(Encoder::Aes(Aes256Sha256Encoder::new(input, options)?))
+            Ok(Encoder::Aes(Box::new(Aes256Sha256Encoder::new(
+                input, options,
+            )?)))
         }
         _ => Err(Error::UnsupportedCompressionMethod(
             method.name().to_string(),

@@ -70,12 +70,8 @@ pub use encryption::Password;
 pub use error::Error;
 pub use reader::{ArchiveReader, BlockDecoder};
 pub use time::NtTime;
-#[cfg(all(feature = "util", not(target_arch = "wasm32")))]
-pub use util::compress::StdWriteSeekAsAsync;
 #[cfg(all(feature = "compress", feature = "util", not(target_arch = "wasm32")))]
 pub use util::compress::*;
-#[cfg(all(feature = "util", not(target_arch = "wasm32")))]
-pub use util::decompress::AsyncStdReadSeek;
 #[cfg(all(feature = "util", not(target_arch = "wasm32")))]
 pub use util::decompress::*;
 #[cfg(all(feature = "util", target_arch = "wasm32"))]

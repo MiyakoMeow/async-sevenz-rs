@@ -245,7 +245,7 @@ fn test_bcj2() {
         let password = Password::empty();
         let data =
             smol::block_on(async_fs::read("tests/resources/7za433_7zip_lzma2_bcj2.7z")).unwrap();
-        let mut cursor = sevenz_rust2::AsyncStdReadSeek::new(std::io::Cursor::new(data));
+        let mut cursor = futures::io::Cursor::new(data);
         let fd = BlockDecoder::new(1, i, &archive, &password, &mut cursor);
         println!("entry_count:{}", fd.entry_count());
         fd.for_each_entries(&mut |entry, reader| {

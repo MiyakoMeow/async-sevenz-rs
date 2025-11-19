@@ -11,7 +11,7 @@ fn main() {
     ))
     .unwrap();
     let data = smol::block_on(afs::read("examples/data/sample.7z")).unwrap();
-    let mut cursor = sevenz_rust2::AsyncStdReadSeek::new(std::io::Cursor::new(data));
+    let mut cursor = futures::io::Cursor::new(data);
     let block_count = archive.blocks.len();
     let my_file_name = "7zFormat.txt";
 

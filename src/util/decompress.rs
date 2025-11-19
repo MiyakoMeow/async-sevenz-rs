@@ -37,45 +37,6 @@ impl<R: AsyncRead + AsyncSeek + Unpin> Seek for AsyncReadSeekAsStd<R> {
     }
 }
 
-pub struct AsyncStdReadSeek<R: Read + Seek + Unpin> {
-    inner: R,
-}
-
-impl<R: Read + Seek + Unpin> AsyncStdReadSeek<R> {
-    pub fn new(inner: R) -> Self {
-        Self { inner }
-    }
-
-    pub fn into_inner(self) -> R {
-        self.inner
-    }
-}
-
-impl<R: Read + Seek + Unpin> AsyncRead for AsyncStdReadSeek<R> {
-    fn poll_read(
-        mut self: Pin<&mut Self>,
-        _cx: &mut std::task::Context<'_>,
-        buf: &mut [u8],
-    ) -> std::task::Poll<std::io::Result<usize>> {
-        std::task::Poll::Ready(self.inner.read(buf))
-    }
-}
-
-impl<R: Read + Seek + Unpin> AsyncSeek for AsyncStdReadSeek<R> {
-    fn poll_seek(
-        mut self: Pin<&mut Self>,
-        _cx: &mut std::task::Context<'_>,
-        pos: futures::io::SeekFrom,
-    ) -> std::task::Poll<std::io::Result<u64>> {
-        let std_pos = match pos {
-            futures::io::SeekFrom::Start(n) => SeekFrom::Start(n),
-            futures::io::SeekFrom::End(i) => SeekFrom::End(i),
-            futures::io::SeekFrom::Current(i) => SeekFrom::Current(i),
-        };
-        std::task::Poll::Ready(self.inner.seek(std_pos))
-    }
-}
-
 /// Decompresses an archive file to a destination directory.
 ///
 /// This is a convenience function for decompressing archive files directly from the filesystem.
