@@ -6,7 +6,9 @@ use std::{
 };
 
 use async_fs as afs;
+use futures::io::{AsyncSeek, AsyncSeekExt, AsyncWrite, AsyncWriteExt};
 use futures_lite::StreamExt;
+use std::io::SeekFrom;
 
 #[cfg(feature = "aes256")]
 use crate::encoder_options::AesEncoderOptions;
@@ -17,15 +19,19 @@ use crate::{ArchiveEntry, ArchiveWriter, EncoderMethod, Error, Password, writer:
 /// # Arguments
 /// * `src` - Path to the source file or directory to compress
 /// * `dest` - Writer that implements `Write + Seek` to write the compressed archive to
-pub async fn compress<W: Write + Seek>(src: impl AsRef<Path>, dest: W) -> Result<W, Error> {
-    let mut archive_writer = ArchiveWriter::new(dest)?;
+pub async fn compress<W: AsyncWrite + AsyncSeek + Unpin>(
+    src: impl AsRef<Path>,
+    dest: W,
+) -> Result<W, Error> {
+    let mut archive_writer = ArchiveWriter::new(AsyncWriteSeekAsStd::new(dest))?;
     let parent = if src.as_ref().is_dir() {
         src.as_ref()
     } else {
         src.as_ref().parent().unwrap_or(src.as_ref())
     };
     compress_path(src.as_ref(), parent, &mut archive_writer).await?;
-    Ok(archive_writer.finish()?)
+    let out = archive_writer.finish()?;
+    Ok(out.into_inner())
 }
 
 /// Compresses a source file or directory to a destination writer with password encryption.
@@ -35,12 +41,12 @@ pub async fn compress<W: Write + Seek>(src: impl AsRef<Path>, dest: W) -> Result
 /// * `dest` - Writer that implements `Write + Seek` to write the compressed archive to
 /// * `password` - Password to encrypt the archive with
 #[cfg(feature = "aes256")]
-pub async fn compress_encrypted<W: Write + Seek>(
+pub async fn compress_encrypted<W: AsyncWrite + AsyncSeek + Unpin>(
     src: impl AsRef<Path>,
     dest: W,
     password: Password,
 ) -> Result<W, Error> {
-    let mut archive_writer = ArchiveWriter::new(dest)?;
+    let mut archive_writer = ArchiveWriter::new(AsyncWriteSeekAsStd::new(dest))?;
     if !password.is_empty() {
         archive_writer.set_content_methods(vec![
             AesEncoderOptions::new(password).into(),
@@ -53,7 +59,8 @@ pub async fn compress_encrypted<W: Write + Seek>(
         src.as_ref().parent().unwrap_or(src.as_ref())
     };
     compress_path(src.as_ref(), parent, &mut archive_writer).await?;
-    Ok(archive_writer.finish()?)
+    let out = archive_writer.finish()?;
+    Ok(out.into_inner())
 }
 
 /// Compresses a source file or directory to a destination file path.
@@ -72,7 +79,9 @@ pub async fn compress_to_path(src: impl AsRef<Path>, dest: impl AsRef<Path>) -> 
         }
     }
     let cursor = std::io::Cursor::new(Vec::<u8>::new());
-    let cursor = compress(src, cursor).await?;
+    let async_cursor = StdWriteSeekAsAsync::new(cursor);
+    let async_cursor = compress(src, async_cursor).await?;
+    let cursor = async_cursor.into_inner();
     let data = cursor.into_inner();
     afs::write(dest.as_ref(), data).await?;
     Ok(())
@@ -100,7 +109,9 @@ pub async fn compress_to_path_encrypted(
         }
     }
     let cursor = std::io::Cursor::new(Vec::<u8>::new());
-    let cursor = compress_encrypted(src, cursor, password).await?;
+    let async_cursor = StdWriteSeekAsAsync::new(cursor);
+    let async_cursor = compress_encrypted(src, async_cursor, password).await?;
+    let cursor = async_cursor.into_inner();
     let data = cursor.into_inner();
     afs::write(dest.as_ref(), data).await?;
     Ok(())
@@ -287,5 +298,95 @@ fn extract_file_name(src: &impl AsRef<Path>, ele: &PathBuf) -> Result<String, Er
     } else {
         // Directory case: remove path.
         Ok(ele.strip_prefix(src).unwrap().to_string_lossy().to_string())
+    }
+}
+
+struct AsyncWriteSeekAsStd<W: AsyncWrite + AsyncSeek + Unpin> {
+    inner: W,
+}
+
+impl<W: AsyncWrite + AsyncSeek + Unpin> AsyncWriteSeekAsStd<W> {
+    fn new(inner: W) -> Self {
+        Self { inner }
+    }
+    fn into_inner(self) -> W {
+        self.inner
+    }
+}
+
+impl<W: AsyncWrite + AsyncSeek + Unpin> Write for AsyncWriteSeekAsStd<W> {
+    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+        async_io::block_on(AsyncWriteExt::write(&mut self.inner, buf))
+    }
+    fn flush(&mut self) -> std::io::Result<()> {
+        async_io::block_on(AsyncWriteExt::flush(&mut self.inner))
+    }
+}
+
+impl<W: AsyncWrite + AsyncSeek + Unpin> Seek for AsyncWriteSeekAsStd<W> {
+    fn seek(&mut self, pos: SeekFrom) -> std::io::Result<u64> {
+        async_io::block_on(AsyncSeekExt::seek(
+            &mut self.inner,
+            match pos {
+                SeekFrom::Start(n) => futures::io::SeekFrom::Start(n),
+                SeekFrom::End(i) => futures::io::SeekFrom::End(i),
+                SeekFrom::Current(i) => futures::io::SeekFrom::Current(i),
+            },
+        ))
+    }
+}
+
+struct StdWriteSeekAsAsync<W: Write + Seek> {
+    inner: W,
+}
+
+impl<W: Write + Seek> StdWriteSeekAsAsync<W> {
+    fn new(inner: W) -> Self {
+        Self { inner }
+    }
+    fn into_inner(self) -> W {
+        self.inner
+    }
+}
+
+impl<W: Write + Seek + Unpin> AsyncWrite for StdWriteSeekAsAsync<W> {
+    fn poll_write(
+        self: std::pin::Pin<&mut Self>,
+        _cx: &mut std::task::Context<'_>,
+        buf: &[u8],
+    ) -> std::task::Poll<std::io::Result<usize>> {
+        let this = self.get_mut();
+        std::task::Poll::Ready(this.inner.write(buf))
+    }
+
+    fn poll_flush(
+        self: std::pin::Pin<&mut Self>,
+        _cx: &mut std::task::Context<'_>,
+    ) -> std::task::Poll<std::io::Result<()>> {
+        let this = self.get_mut();
+        std::task::Poll::Ready(this.inner.flush())
+    }
+
+    fn poll_close(
+        self: std::pin::Pin<&mut Self>,
+        _cx: &mut std::task::Context<'_>,
+    ) -> std::task::Poll<std::io::Result<()>> {
+        std::task::Poll::Ready(Ok(()))
+    }
+}
+
+impl<W: Write + Seek + Unpin> AsyncSeek for StdWriteSeekAsAsync<W> {
+    fn poll_seek(
+        self: std::pin::Pin<&mut Self>,
+        _cx: &mut std::task::Context<'_>,
+        pos: futures::io::SeekFrom,
+    ) -> std::task::Poll<std::io::Result<u64>> {
+        let this = self.get_mut();
+        let res = match pos {
+            futures::io::SeekFrom::Start(n) => this.inner.seek(SeekFrom::Start(n)),
+            futures::io::SeekFrom::End(i) => this.inner.seek(SeekFrom::End(i)),
+            futures::io::SeekFrom::Current(i) => this.inner.seek(SeekFrom::Current(i)),
+        };
+        std::task::Poll::Ready(res)
     }
 }
