@@ -3,11 +3,10 @@ use std::io::Read;
 #[cfg(feature = "compress")]
 use std::io::Write;
 
-use crate::{ByteReader, ByteWriter, Error};
+use crate::Error;
 use async_compression::futures::bufread::Lz4Decoder as AsyncLz4Decoder;
 #[cfg(feature = "compress")]
 use async_compression::futures::write::Lz4Encoder as AsyncLz4Encoder;
-use futures::io::AsyncReadExt as _;
 use futures::io::BufReader as AsyncBufReader;
 use futures::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 

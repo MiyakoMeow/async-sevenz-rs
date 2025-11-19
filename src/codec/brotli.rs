@@ -3,7 +3,7 @@ use std::io::Read;
 #[cfg(feature = "compress")]
 use std::io::{self, Write};
 
-use crate::{ByteReader, Error};
+use crate::Error;
 use async_compression::futures::bufread::BrotliDecoder as AsyncBrotliDecoder;
 #[cfg(feature = "compress")]
 use async_compression::futures::write::BrotliEncoder as AsyncBrotliEncoder;
