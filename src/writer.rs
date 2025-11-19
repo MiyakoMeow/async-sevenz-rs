@@ -6,7 +6,6 @@ mod seq_reader;
 mod source_reader;
 mod unpack_info;
 
-use futures::io::AllowStdIo;
 use futures::io::{
     AsyncRead, AsyncReadExt, AsyncSeek, AsyncSeekExt, AsyncWrite, AsyncWriteExt, SeekFrom,
 };
@@ -403,11 +402,13 @@ impl<W: AsyncWrite + AsyncSeek + Unpin> ArchiveWriter<W> {
 
         let methods = Arc::new(methods);
 
-        let mut encoded_data = Vec::with_capacity(size as usize / 2);
+        let mut encoded_cursor = std::io::Cursor::new(Vec::with_capacity(size as usize / 2));
 
         let mut compress_size = 0;
-        let mut compressed =
-            CompressWrapWriter::new(AllowStdIo::new(&mut encoded_data), &mut compress_size);
+        let mut compressed = CompressWrapWriter::new(
+            crate::util::compress::StdWriteSeekAsAsync::new(&mut encoded_cursor),
+            &mut compress_size,
+        );
         {
             let mut encoder = Self::create_writer(&methods, &mut compressed, &mut more_sizes)
                 .map_err(std::io::Error::other)?;
@@ -423,6 +424,7 @@ impl<W: AsyncWrite + AsyncSeek + Unpin> ArchiveWriter<W> {
             header.write_all(&raw_header)?;
             return Ok(());
         }
+        let encoded_data = encoded_cursor.into_inner();
         async_io::block_on(AsyncWriteExt::write_all(
             &mut self.output,
             &encoded_data[..compress_size],

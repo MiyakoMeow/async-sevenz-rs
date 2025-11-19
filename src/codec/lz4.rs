@@ -7,8 +7,8 @@ use crate::{ByteReader, ByteWriter, Error};
 use async_compression::futures::bufread::Lz4Decoder as AsyncLz4Decoder;
 #[cfg(feature = "compress")]
 use async_compression::futures::write::Lz4Encoder as AsyncLz4Encoder;
+use futures::io::AsyncReadExt as _;
 use futures::io::BufReader as AsyncBufReader;
-use futures::io::{AllowStdIo, AsyncReadExt as _};
 use futures::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 
 /// Magic bytes of a skippable frame as used in LZ4 by zstdmt.
@@ -17,7 +17,7 @@ const SKIPPABLE_FRAME_MAGIC: u32 = 0x184D2A50;
 /// Custom decoder to support the custom format first implemented by zstdmt, which allows to have
 /// optional skippable frames.
 pub(crate) struct Lz4Decoder<R: AsyncRead + Unpin> {
-    inner: Option<AsyncLz4Decoder<AsyncBufReader<AllowStdIo<InnerReader<R>>>>>,
+    inner: Option<AsyncLz4Decoder<AsyncBufReader<InnerReader<R>>>>,
 }
 
 impl<R: AsyncRead + Unpin> Lz4Decoder<R> {
@@ -45,8 +45,7 @@ impl<R: AsyncRead + Unpin> Lz4Decoder<R> {
             InnerReader::new_standard(input, header[..header_read].to_vec())
         };
 
-        let allow = AllowStdIo::new(inner_reader);
-        let bufread = AsyncBufReader::new(allow);
+        let bufread = AsyncBufReader::new(inner_reader);
         let decoder = AsyncLz4Decoder::new(bufread);
 
         Ok(Lz4Decoder {
@@ -61,13 +60,11 @@ impl<R: AsyncRead + Unpin> Read for Lz4Decoder<R> {
             match async_io::block_on(AsyncReadExt::read(inner, buf)) {
                 Ok(0) => {
                     let bufreader = inner.get_mut();
-                    let allow = bufreader.get_mut();
-                    let inner_reader = allow.get_mut();
+                    let inner_reader = bufreader.get_mut();
 
                     if inner_reader.read_next_frame_header()? {
                         let reader = std::mem::replace(inner_reader, InnerReader::empty());
-                        let allow = AllowStdIo::new(reader);
-                        let bufread = AsyncBufReader::new(allow);
+                        let bufread = AsyncBufReader::new(reader);
                         let mut deencoder = AsyncLz4Decoder::new(bufread);
                         let result = async_io::block_on(AsyncReadExt::read(&mut deencoder, buf));
                         self.inner = Some(deencoder);
@@ -162,23 +159,27 @@ impl<R: AsyncRead + Unpin> InnerReader<R> {
     }
 }
 
-impl<R: AsyncRead + Unpin> Read for InnerReader<R> {
-    fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
-        match self {
-            InnerReader::Empty => Ok(0),
+impl<R: AsyncRead + Unpin> futures::io::AsyncRead for InnerReader<R> {
+    fn poll_read(
+        mut self: std::pin::Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+        buf: &mut [u8],
+    ) -> std::task::Poll<std::io::Result<usize>> {
+        match &mut *self {
+            InnerReader::Empty => std::task::Poll::Ready(Ok(0)),
             InnerReader::Standard {
                 reader,
                 header_buffer,
                 header_finished,
             } => {
                 if !*header_finished {
-                    let bytes_read = header_buffer.read(buf)?;
+                    let bytes_read = std::io::Read::read(header_buffer, buf)?;
                     if bytes_read > 0 {
-                        return Ok(bytes_read);
+                        return std::task::Poll::Ready(Ok(bytes_read));
                     }
                     *header_finished = true;
                 }
-                async_io::block_on(AsyncReadExt::read(reader, buf))
+                std::pin::Pin::new(reader).poll_read(cx, buf)
             }
             InnerReader::Skippable {
                 reader,
@@ -186,24 +187,23 @@ impl<R: AsyncRead + Unpin> Read for InnerReader<R> {
                 frame_finished,
             } => {
                 if *frame_finished || *remaining_in_frame == 0 {
-                    return Ok(0);
+                    return std::task::Poll::Ready(Ok(0));
                 }
-
                 let bytes_to_read = std::cmp::min(*remaining_in_frame as usize, buf.len());
-                let bytes_read =
-                    async_io::block_on(AsyncReadExt::read(reader, &mut buf[..bytes_to_read]))?;
-
-                if bytes_read == 0 {
-                    *frame_finished = true;
-                    return Ok(0);
+                let poll = std::pin::Pin::new(reader).poll_read(cx, &mut buf[..bytes_to_read]);
+                if let std::task::Poll::Ready(Ok(bytes_read)) = poll {
+                    if bytes_read == 0 {
+                        *frame_finished = true;
+                        return std::task::Poll::Ready(Ok(0));
+                    }
+                    *remaining_in_frame -= bytes_read as u32;
+                    if *remaining_in_frame == 0 {
+                        *frame_finished = true;
+                    }
+                    std::task::Poll::Ready(Ok(bytes_read))
+                } else {
+                    poll
                 }
-
-                *remaining_in_frame -= bytes_read as u32;
-                if *remaining_in_frame == 0 {
-                    *frame_finished = true;
-                }
-
-                Ok(bytes_read)
             }
         }
     }
@@ -258,12 +258,12 @@ impl<W: AsyncWrite + Unpin> Lz4Encoder<W> {
         compressed_data.clear();
 
         let cursor = std::io::Cursor::new(Vec::new());
-        let allow = AllowStdIo::new(cursor);
-        let mut enc = AsyncLz4Encoder::new(allow);
+        let adapter = crate::util::compress::StdWriteSeekAsAsync::new(cursor);
+        let mut enc = AsyncLz4Encoder::new(adapter);
         async_io::block_on(AsyncWriteExt::write_all(&mut enc, uncompressed_data))?;
         async_io::block_on(enc.close())?;
-        let allow = enc.into_inner();
-        let cursor = allow.into_inner();
+        let adapter = enc.into_inner();
+        let cursor = adapter.into_inner();
         let data = cursor.into_inner();
 
         if data.is_empty() {

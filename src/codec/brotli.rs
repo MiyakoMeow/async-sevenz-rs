@@ -7,8 +7,8 @@ use crate::{ByteReader, Error};
 use async_compression::futures::bufread::BrotliDecoder as AsyncBrotliDecoder;
 #[cfg(feature = "compress")]
 use async_compression::futures::write::BrotliEncoder as AsyncBrotliEncoder;
+use futures::io::AsyncReadExt as _;
 use futures::io::BufReader as AsyncBufReader;
-use futures::io::{AllowStdIo, AsyncReadExt as _};
 #[cfg(feature = "compress")]
 use futures::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 
@@ -22,7 +22,7 @@ const HINT_UNIT_SIZE: usize = 65536;
 /// Custom decoder to support the custom format first implemented by zstdmt, which allows to have
 /// optional skippable frames.
 pub(crate) struct BrotliDecoder<R: AsyncRead + Unpin> {
-    inner: Option<AsyncBrotliDecoder<AsyncBufReader<AllowStdIo<InnerReader<R>>>>>,
+    inner: Option<AsyncBrotliDecoder<AsyncBufReader<InnerReader<R>>>>,
     buffer_size: usize,
 }
 
@@ -56,8 +56,7 @@ impl<R: AsyncRead + Unpin> BrotliDecoder<R> {
             InnerReader::new_standard(input, header[..header_read].to_vec())
         };
 
-        let allow = AllowStdIo::new(inner_reader);
-        let bufread = AsyncBufReader::new(allow);
+        let bufread = AsyncBufReader::new(inner_reader);
         let decompressor = AsyncBrotliDecoder::new(bufread);
 
         Ok(BrotliDecoder {
@@ -73,13 +72,11 @@ impl<R: AsyncRead + Unpin> Read for BrotliDecoder<R> {
             match async_io::block_on(AsyncReadExt::read(inner, buf)) {
                 Ok(0) => {
                     let bufreader = inner.get_mut();
-                    let allow = bufreader.get_mut();
-                    let inner_reader = allow.get_mut();
+                    let inner_reader = bufreader.get_mut();
 
                     if inner_reader.read_next_frame_header()? {
                         let reader = std::mem::replace(inner_reader, InnerReader::empty());
-                        let allow = AllowStdIo::new(reader);
-                        let bufread = AsyncBufReader::new(allow);
+                        let bufread = AsyncBufReader::new(reader);
                         let mut decompressor = AsyncBrotliDecoder::new(bufread);
                         let result = async_io::block_on(AsyncReadExt::read(&mut decompressor, buf));
                         self.inner = Some(decompressor);
@@ -184,23 +181,27 @@ impl<R: AsyncRead + Unpin> InnerReader<R> {
     }
 }
 
-impl<R: AsyncRead + Unpin> Read for InnerReader<R> {
-    fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
-        match self {
-            InnerReader::Empty => Ok(0),
+impl<R: AsyncRead + Unpin> futures::io::AsyncRead for InnerReader<R> {
+    fn poll_read(
+        mut self: std::pin::Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+        buf: &mut [u8],
+    ) -> std::task::Poll<std::io::Result<usize>> {
+        match &mut *self {
+            InnerReader::Empty => std::task::Poll::Ready(Ok(0)),
             InnerReader::Standard {
                 reader,
                 header_buffer,
                 header_finished,
             } => {
                 if !*header_finished {
-                    let bytes_read = header_buffer.read(buf)?;
+                    let bytes_read = std::io::Read::read(header_buffer, buf)?;
                     if bytes_read > 0 {
-                        return Ok(bytes_read);
+                        return std::task::Poll::Ready(Ok(bytes_read));
                     }
                     *header_finished = true;
                 }
-                async_io::block_on(AsyncReadExt::read(reader, buf))
+                std::pin::Pin::new(reader).poll_read(cx, buf)
             }
             InnerReader::Skippable {
                 reader,
@@ -208,24 +209,23 @@ impl<R: AsyncRead + Unpin> Read for InnerReader<R> {
                 frame_finished,
             } => {
                 if *frame_finished || *remaining_in_frame == 0 {
-                    return Ok(0);
+                    return std::task::Poll::Ready(Ok(0));
                 }
-
                 let bytes_to_read = std::cmp::min(*remaining_in_frame as usize, buf.len());
-                let bytes_read =
-                    async_io::block_on(AsyncReadExt::read(reader, &mut buf[..bytes_to_read]))?;
-
-                if bytes_read == 0 {
-                    *frame_finished = true;
-                    return Ok(0);
+                let poll = std::pin::Pin::new(reader).poll_read(cx, &mut buf[..bytes_to_read]);
+                if let std::task::Poll::Ready(Ok(bytes_read)) = poll {
+                    if bytes_read == 0 {
+                        *frame_finished = true;
+                        return std::task::Poll::Ready(Ok(0));
+                    }
+                    *remaining_in_frame -= bytes_read as u32;
+                    if *remaining_in_frame == 0 {
+                        *frame_finished = true;
+                    }
+                    std::task::Poll::Ready(Ok(bytes_read))
+                } else {
+                    poll
                 }
-
-                *remaining_in_frame -= bytes_read as u32;
-                if *remaining_in_frame == 0 {
-                    *frame_finished = true;
-                }
-
-                Ok(bytes_read)
             }
         }
     }
@@ -246,7 +246,11 @@ enum InnerWriter<W: AsyncWrite + Unpin> {
     Standard(AsyncBrotliEncoder<W>),
     Framed {
         writer: W,
-        compressor: Option<AsyncBrotliEncoder<AllowStdIo<std::io::Cursor<Vec<u8>>>>>,
+        compressor: Option<
+            AsyncBrotliEncoder<
+                crate::util::compress::StdWriteSeekAsAsync<std::io::Cursor<Vec<u8>>>,
+            >,
+        >,
         frame_size: usize,
         uncompressed_bytes_in_frame: usize,
     },
@@ -270,9 +274,9 @@ impl<W: AsyncWrite + Unpin> BrotliEncoder<W> {
             InnerWriter::Standard(compressor)
         } else {
             let cursor = std::io::Cursor::new(Vec::with_capacity(frame_size));
-            let allow = AllowStdIo::new(cursor);
+            let adapter = crate::util::compress::StdWriteSeekAsAsync::new(cursor);
             let compressor = Some(AsyncBrotliEncoder::with_quality(
-                allow,
+                adapter,
                 async_compression::Level::Precise(quality as i32),
             ));
             InnerWriter::Framed {
@@ -363,16 +367,16 @@ impl<W: AsyncWrite + Unpin> Write for BrotliEncoder<W> {
                     if *uncompressed_bytes_in_frame >= *frame_size {
                         let mut comp = compressor.take().expect("no compressor set");
                         async_io::block_on(comp.close())?;
-                        let allow = comp.into_inner();
-                        let cursor = allow.into_inner();
+                        let adapter = comp.into_inner();
+                        let cursor = adapter.into_inner();
                         let data = cursor.into_inner();
 
                         Self::write_frame(writer, &data, *uncompressed_bytes_in_frame)?;
 
                         let new_cursor = std::io::Cursor::new(Vec::with_capacity(*frame_size));
-                        let allow = AllowStdIo::new(new_cursor);
+                        let adapter = crate::util::compress::StdWriteSeekAsAsync::new(new_cursor);
                         *compressor = Some(AsyncBrotliEncoder::with_quality(
-                            allow,
+                            adapter,
                             async_compression::Level::Precise(self.quality as i32),
                         ));
 
@@ -398,8 +402,8 @@ impl<W: AsyncWrite + Unpin> Write for BrotliEncoder<W> {
             } => {
                 let mut comp = compressor.take().expect("no compressor set");
                 async_io::block_on(comp.close())?;
-                let allow = comp.into_inner();
-                let cursor = allow.into_inner();
+                let adapter = comp.into_inner();
+                let cursor = adapter.into_inner();
                 let data = cursor.into_inner();
 
                 if !data.is_empty() {
@@ -408,9 +412,9 @@ impl<W: AsyncWrite + Unpin> Write for BrotliEncoder<W> {
                 }
 
                 let new_cursor = std::io::Cursor::new(Vec::with_capacity(*frame_size));
-                let allow = AllowStdIo::new(new_cursor);
+                let adapter = crate::util::compress::StdWriteSeekAsAsync::new(new_cursor);
                 *compressor = Some(AsyncBrotliEncoder::with_quality(
-                    allow,
+                    adapter,
                     async_compression::Level::Precise(self.quality as i32),
                 ));
 
