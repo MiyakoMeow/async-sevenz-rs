@@ -121,7 +121,7 @@ async fn compress_path<W: AsyncWrite + AsyncSeek + Unpin, P: AsRef<Path>>(
             .map_err(|e| Error::other(e.to_string()))?
             .to_string_lossy()
             .to_string();
-        let entry = ArchiveEntry::from_path(path.as_path(), entry_name);
+        let entry = ArchiveEntry::from_path(path.as_path(), entry_name).await;
         let meta = afs::metadata(&path)
             .await
             .map_err(|e| Error::io_msg(e, "error metadata"))?;
@@ -253,7 +253,7 @@ where
             let name = extract_file_name(&src, &ele)?;
 
             zip.push_archive_entry::<crate::writer::SourceReader<crate::writer::LazyFileReader>>(
-                ArchiveEntry::from_path(ele.as_path(), name),
+                ArchiveEntry::from_path(ele.as_path(), name).await,
                 Some(LazyFileReader::new(ele.clone()).into()),
             )
             .await?;
@@ -268,7 +268,7 @@ where
 
         if size >= MAX_BLOCK_SIZE {
             zip.push_archive_entry::<crate::writer::SourceReader<crate::writer::LazyFileReader>>(
-                ArchiveEntry::from_path(ele.as_path(), name),
+                ArchiveEntry::from_path(ele.as_path(), name).await,
                 Some(LazyFileReader::new(ele.clone()).into()),
             )
             .await?;
@@ -281,7 +281,7 @@ where
             file_size = 0;
         }
         file_size += size;
-        entries.push(ArchiveEntry::from_path(ele.as_path(), name));
+        entries.push(ArchiveEntry::from_path(ele.as_path(), name).await);
         files.push(LazyFileReader::new(ele).into());
     }
     if !entries.is_empty() {

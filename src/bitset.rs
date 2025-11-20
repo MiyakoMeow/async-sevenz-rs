@@ -1,6 +1,4 @@
 use std::fmt;
-#[cfg(feature = "compress")]
-use std::io::Write;
 
 /// A set of usize values represented as a bit vector.
 #[derive(Clone, PartialEq, Eq)]
@@ -141,28 +139,6 @@ impl fmt::Debug for BitSet {
     }
 }
 
-#[cfg(feature = "compress")]
-pub(crate) fn write_bit_set<W: Write>(mut write: W, bs: &BitSet) -> std::io::Result<()> {
-    use crate::ByteWriter;
-
-    let mut cache = 0;
-    let mut shift = 7;
-    for i in 0..bs.bit_count {
-        let set = if bs.contains(i) { 1 } else { 0 };
-        cache |= set << shift;
-        shift -= 1;
-        if shift < 0 {
-            write.write_u8(cache)?;
-            shift = 7;
-            cache = 0;
-        }
-    }
-    if shift != 7 {
-        write.write_u8(cache)?;
-    }
-    Ok(())
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -211,58 +187,5 @@ mod tests {
         bs.insert(63);
 
         assert!(bs.bit_count >= 64);
-    }
-
-    #[test]
-    #[cfg(feature = "compress")]
-    fn test_bitset_serialization() {
-        let mut bs = BitSet::new();
-        bs.insert(0);
-        bs.insert(3);
-        bs.insert(7);
-        bs.insert(8);
-        bs.insert(15);
-
-        let mut buffer = Vec::new();
-        write_bit_set(&mut buffer, &bs).unwrap();
-
-        assert_eq!(buffer, vec![0b10010001, 0b10000001]);
-
-        let deserialized = read_bits_test(&mut buffer.as_slice(), 16).unwrap();
-        assert!(deserialized.contains(0));
-        assert!(!deserialized.contains(1));
-        assert!(!deserialized.contains(2));
-        assert!(deserialized.contains(3));
-        assert!(!deserialized.contains(4));
-        assert!(!deserialized.contains(5));
-        assert!(!deserialized.contains(6));
-        assert!(deserialized.contains(7));
-        assert!(deserialized.contains(8));
-        assert!(!deserialized.contains(9));
-        assert!(!deserialized.contains(14));
-        assert!(deserialized.contains(15));
-    }
-
-    #[cfg(feature = "compress")]
-    fn read_bits_test<R: std::io::Read>(
-        reader: &mut R,
-        size: usize,
-    ) -> Result<BitSet, std::io::Error> {
-        let mut bits = BitSet::with_capacity(size);
-        let mut mask = 0u32;
-        let mut cache = 0u32;
-        for i in 0..size {
-            if mask == 0 {
-                mask = 0x80;
-                let mut buf = [0];
-                reader.read_exact(&mut buf)?;
-                cache = buf[0] as u32;
-            }
-            if (cache & mask) != 0 {
-                bits.insert(i);
-            }
-            mask >>= 1;
-        }
-        Ok(bits)
     }
 }

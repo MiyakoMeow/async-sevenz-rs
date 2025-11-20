@@ -128,7 +128,7 @@ pub fn add_decoder<I: AsyncRead + Unpin>(
     input: I,
     uncompressed_len: usize,
     coder: &Coder,
-    #[allow(unused)] password: &Password,
+    _password: &Password,
     max_mem_limit_kb: usize,
     threads: u32,
 ) -> Result<Decoder<I>, Error> {
@@ -271,10 +271,10 @@ pub fn add_decoder<I: AsyncRead + Unpin>(
         }
         #[cfg(feature = "aes256")]
         EncoderMethod::ID_AES256_SHA256 => {
-            if password.is_empty() {
+            if _password.is_empty() {
                 return Err(Error::PasswordRequired);
             }
-            let de = Aes256Sha256Decoder::new(input, &coder.properties, password)?;
+            let de = Aes256Sha256Decoder::new(input, &coder.properties, _password)?;
             Ok(Decoder::Aes256Sha256(Box::new(de)))
         }
         _ => Err(Error::UnsupportedCompressionMethod(

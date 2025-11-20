@@ -2,7 +2,7 @@ use std::io::Write;
 use std::pin::Pin;
 use std::task::{Context, Poll};
 
-use futures::io::{AsyncRead, AsyncWrite, AsyncWriteExt};
+use futures::io::{AsyncRead, AsyncWrite};
 
 #[cfg(feature = "compress")]
 use aes::cipher::BlockEncryptMut;

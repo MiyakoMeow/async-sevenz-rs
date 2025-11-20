@@ -166,7 +166,7 @@ impl<W: AsyncWrite + AsyncSeek + Unpin> ArchiveWriter<W> {
     /// let entry = smol::block_on(async {
     ///     sz
     ///         .push_archive_entry(
-    ///             ArchiveEntry::from_path(&src, name),
+    ///             ArchiveEntry::from_path(&src, name).await,
     ///             Some(futures::io::Cursor::new(&b"example"[..])),
     ///         )
     ///         .await
@@ -369,12 +369,9 @@ impl<W: AsyncWrite + AsyncSeek + Unpin> ArchiveWriter<W> {
 
     /// Finishes the compression.
     pub async fn finish(mut self) -> std::io::Result<W> {
-        let mut header: Vec<u8> = Vec::with_capacity(64 * 1024);
-        {
-            let mut cursor = futures::io::Cursor::new(Vec::with_capacity(64 * 1024));
-            self.write_encoded_header(&mut cursor).await?;
-            header = cursor.into_inner();
-        }
+        let mut cursor = futures::io::Cursor::new(Vec::with_capacity(64 * 1024));
+        self.write_encoded_header(&mut cursor).await?;
+        let header = cursor.into_inner();
         let header_pos = AsyncSeekExt::stream_position(&mut self.output).await?;
         AsyncWriteExt::write_all(&mut self.output, &header).await?;
         let crc32 = crc32fast::hash(&header);

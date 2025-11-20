@@ -560,7 +560,6 @@ impl EncoderOptions {
             EncoderOptions::Lzma(o) => o.0.dict_size,
             #[cfg(feature = "compress")]
             EncoderOptions::Lzma2(o) => o.options.lzma_options.dict_size,
-            #[allow(unused)]
             _ => 0,
         }
     }

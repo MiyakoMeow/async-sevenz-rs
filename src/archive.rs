@@ -29,8 +29,7 @@ pub(crate) const K_M_TIME: u8 = 0x14;
 pub(crate) const K_WIN_ATTRIBUTES: u8 = 0x15;
 
 /// TODO: Implement reading & writing comments
-#[allow(unused)]
-pub(crate) const K_COMMENT: u8 = 0x16;
+pub const K_COMMENT: u8 = 0x16;
 pub(crate) const K_ENCODED_HEADER: u8 = 0x17;
 pub(crate) const K_START_POS: u8 = 0x18;
 pub(crate) const K_DUMMY: u8 = 0x19;
@@ -146,7 +145,7 @@ impl ArchiveEntry {
     /// # Arguments
     /// * `path` - The filesystem path to extract metadata from
     /// * `entry_name` - The name/path to use for this entry within the archive
-    pub fn from_path(path: impl AsRef<std::path::Path>, entry_name: String) -> Self {
+    pub async fn from_path(path: impl AsRef<std::path::Path>, entry_name: String) -> Self {
         let path = path.as_ref();
         #[cfg(target_os = "windows")]
         let entry_name = {
@@ -165,7 +164,7 @@ impl ArchiveEntry {
             ..Default::default()
         };
 
-        if let Ok(meta) = path.metadata() {
+        if let Ok(meta) = async_fs::metadata(path).await {
             if let Ok(modified) = meta.modified() {
                 if let Ok(date) = NtTime::try_from(modified) {
                     entry.last_modified_date = date;

@@ -1,5 +1,3 @@
-use crate::ByteWriter;
-
 /// A password used for password protected, encrypted files.
 ///
 /// Use [`Password::empty()`] to create an empty password when no
@@ -53,9 +51,8 @@ impl AsRef<[u8]> for Password {
 impl From<&str> for Password {
     fn from(s: &str) -> Self {
         let mut result = Vec::with_capacity(s.len() * 2);
-        let utf16 = s.encode_utf16();
-        for u in utf16 {
-            let _ = result.write_u16(u);
+        for u in s.encode_utf16() {
+            result.extend_from_slice(&u.to_le_bytes());
         }
         Self(result)
     }

@@ -78,7 +78,7 @@ fn compress_multi_files_mix_solid_and_non_solid() {
         let data = smol::block_on(async_fs::read(&src)).unwrap();
         smol::block_on(async {
             sz.push_archive_entry(
-                ArchiveEntry::from_path(&src, name),
+                ArchiveEntry::from_path(&src, name).await,
                 Some(futures::io::Cursor::new(data)),
             )
             .await

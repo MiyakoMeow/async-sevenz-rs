@@ -1302,9 +1302,8 @@ impl<R: futures::io::AsyncRead + futures::io::AsyncSeek + Unpin> ArchiveReader<R
     /// * `archive` - An existing parsed archive instance
     /// * `source` - The reader providing access to the archive data
     /// * `password` - Password for encrypted archives
-    #[allow(dead_code)]
     #[inline]
-    pub(crate) fn from_archive(archive: Archive, source: R, password: Password) -> Self {
+    pub fn from_archive(archive: Archive, source: R, password: Password) -> Self {
         let mut reader = Self {
             source,
             archive,
@@ -1599,8 +1598,7 @@ impl<R: futures::io::AsyncRead + futures::io::AsyncSeek + Unpin> ArchiveReader<R
         ))
     }
 
-    #[allow(missing_docs)]
-    pub async fn for_each_entries<
+    pub(crate) async fn for_each_entries<
         F: for<'a> FnMut(
             &'a ArchiveEntry,
             &'a mut (dyn futures::io::AsyncRead + Unpin + 'a),

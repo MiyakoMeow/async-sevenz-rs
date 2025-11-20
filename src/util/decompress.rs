@@ -200,7 +200,6 @@ pub async fn decompress_with_extract_fn_and_password<R: AsyncRead + AsyncSeek + 
 }
 
 #[cfg(not(target_arch = "wasm32"))]
-#[allow(clippy::await_holding_refcell_ref)]
 async fn decompress_impl<R: AsyncRead + AsyncSeek + Unpin>(
     mut src_reader: R,
     dest: impl AsRef<Path>,
@@ -225,9 +224,10 @@ async fn decompress_impl<R: AsyncRead + AsyncSeek + Unpin>(
             let dest_path = dest.join(entry.name());
             let extract_fn_cell = std::rc::Rc::clone(&extract_fn_cell);
             Box::pin(async move {
-                let mut f = extract_fn_cell.borrow_mut();
-                let fut = f(entry, reader, dest_path.as_path());
-                drop(f);
+                let fut = {
+                    let mut f = extract_fn_cell.borrow_mut();
+                    f(entry, reader, dest_path.as_path())
+                };
                 fut.await
             })
         })
@@ -237,7 +237,6 @@ async fn decompress_impl<R: AsyncRead + AsyncSeek + Unpin>(
 }
 
 #[cfg(not(target_arch = "wasm32"))]
-#[allow(clippy::await_holding_refcell_ref)]
 async fn decompress_path_impl(
     src_path: &Path,
     dest: PathBuf,
@@ -259,9 +258,10 @@ async fn decompress_path_impl(
             let dest_path = dest.join(entry.name());
             let extract_fn_cell = std::rc::Rc::clone(&extract_fn_cell);
             Box::pin(async move {
-                let mut f = extract_fn_cell.borrow_mut();
-                let fut = f(entry, reader, dest_path.as_path());
-                drop(f);
+                let fut = {
+                    let mut f = extract_fn_cell.borrow_mut();
+                    f(entry, reader, dest_path.as_path())
+                };
                 fut.await
             })
         })
