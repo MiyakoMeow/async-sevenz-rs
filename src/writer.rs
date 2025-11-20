@@ -9,7 +9,7 @@ mod unpack_info;
 use futures::io::{
     AsyncRead, AsyncReadExt, AsyncSeek, AsyncSeekExt, AsyncWrite, AsyncWriteExt, SeekFrom,
 };
-use std::{cell::Cell, io::Write, rc::Rc, sync::Arc};
+use std::{cell::Cell, rc::Rc, sync::Arc};
 
 pub(crate) use counting_writer::CountingWriter;
 use crc32fast::Hasher;
@@ -19,20 +19,11 @@ pub(crate) use self::lazy_file_reader::LazyFileReader;
 pub(crate) use self::seq_reader::SeqReader;
 pub use self::source_reader::SourceReader;
 use self::{pack_info::PackInfo, unpack_info::UnpackInfo};
-use crate::{
-    ArchiveEntry, AutoFinish, AutoFinisher, ByteWriter, Error,
-    archive::*,
-    bitset::{BitSet, write_bit_set},
-    encoder,
-};
+use crate::{ArchiveEntry, AutoFinish, AutoFinisher, Error, archive::*, bitset::BitSet, encoder};
 
 macro_rules! write_times {
-    //write_i64
     ($fn_name:tt, $nid:expr, $has_time:tt, $time:tt) => {
-        write_times!($fn_name, $nid, $has_time, $time, write_u64);
-    };
-    ($fn_name:tt, $nid:expr, $has_time:tt, $time:tt, $write_fn:tt) => {
-        fn $fn_name<H: Write>(&self, header: &mut H) -> std::io::Result<()> {
+        async fn $fn_name<H: AsyncWrite + Unpin>(&self, header: &mut H) -> std::io::Result<()> {
             let mut num = 0;
             for entry in self.files.iter() {
                 if entry.$has_time {
@@ -40,30 +31,65 @@ macro_rules! write_times {
                 }
             }
             if num > 0 {
-                header.write_u8($nid)?;
+                AsyncWriteExt::write_all(header, &[$nid]).await?;
                 let mut temp: Vec<u8> = Vec::with_capacity(128);
-                let mut out = &mut temp;
                 if num != self.files.len() {
-                    out.write_u8(0)?;
+                    temp.push(0);
                     let mut times = BitSet::with_capacity(self.files.len());
                     for i in 0..self.files.len() {
                         if self.files[i].$has_time {
                             times.insert(i);
                         }
                     }
-                    write_bit_set(&mut out, &times)?;
+                    let bits = bitset_to_bytes(&times, self.files.len());
+                    temp.extend_from_slice(&bits);
                 } else {
-                    out.write_u8(1)?;
+                    temp.push(1);
                 }
-                out.write_u8(0)?;
+                temp.push(0);
                 for file in self.files.iter() {
                     if file.$has_time {
-                        out.$write_fn((file.$time).into())?;
+                        vec_push_le_u64(&mut temp, (file.$time).into());
                     }
                 }
-                std::io::Write::flush(out)?;
-                write_u64(header, temp.len() as u64)?;
-                header.write_all(&temp)?;
+                write_encoded_u64(header, temp.len() as u64).await?;
+                AsyncWriteExt::write_all(header, &temp).await?;
+            }
+            Ok(())
+        }
+    };
+    ($fn_name:tt, $nid:expr, $has_time:tt, $time:tt, write_u32) => {
+        async fn $fn_name<H: AsyncWrite + Unpin>(&self, header: &mut H) -> std::io::Result<()> {
+            let mut num = 0;
+            for entry in self.files.iter() {
+                if entry.$has_time {
+                    num += 1;
+                }
+            }
+            if num > 0 {
+                AsyncWriteExt::write_all(header, &[$nid]).await?;
+                let mut temp: Vec<u8> = Vec::with_capacity(128);
+                if num != self.files.len() {
+                    temp.push(0);
+                    let mut times = BitSet::with_capacity(self.files.len());
+                    for i in 0..self.files.len() {
+                        if self.files[i].$has_time {
+                            times.insert(i);
+                        }
+                    }
+                    let bits = bitset_to_bytes(&times, self.files.len());
+                    temp.extend_from_slice(&bits);
+                } else {
+                    temp.push(1);
+                }
+                temp.push(0);
+                for file in self.files.iter() {
+                    if file.$has_time {
+                        vec_push_le_u32(&mut temp, file.$time);
+                    }
+                }
+                write_encoded_u64(header, temp.len() as u64).await?;
+                AsyncWriteExt::write_all(header, &temp).await?;
             }
             Ok(())
         }
@@ -344,26 +370,24 @@ impl<W: AsyncWrite + AsyncSeek + Unpin> ArchiveWriter<W> {
     /// Finishes the compression.
     pub async fn finish(mut self) -> std::io::Result<W> {
         let mut header: Vec<u8> = Vec::with_capacity(64 * 1024);
-        self.write_encoded_header(&mut header).await?;
+        {
+            let mut cursor = futures::io::Cursor::new(Vec::with_capacity(64 * 1024));
+            self.write_encoded_header(&mut cursor).await?;
+            header = cursor.into_inner();
+        }
         let header_pos = AsyncSeekExt::stream_position(&mut self.output).await?;
         AsyncWriteExt::write_all(&mut self.output, &header).await?;
         let crc32 = crc32fast::hash(&header);
         let mut hh = [0u8; SIGNATURE_HEADER_SIZE as usize];
-        {
-            let mut hhw = hh.as_mut_slice();
-            //sig
-            hhw.write_all(SEVEN_Z_SIGNATURE)?;
-            //version
-            hhw.write_u8(0)?;
-            hhw.write_u8(4)?;
-            //placeholder for crc: index = 8
-            hhw.write_u32(0)?;
-
-            // start header
-            hhw.write_u64(header_pos - SIGNATURE_HEADER_SIZE)?;
-            hhw.write_u64(0xFFFFFFFF & header.len() as u64)?;
-            hhw.write_u32(crc32)?;
-        }
+        hh[0..SEVEN_Z_SIGNATURE.len()].copy_from_slice(SEVEN_Z_SIGNATURE);
+        hh[6] = 0;
+        hh[7] = 4;
+        hh[8..12].copy_from_slice(&0u32.to_le_bytes());
+        let start_header_offset_le = (header_pos - SIGNATURE_HEADER_SIZE).to_le_bytes();
+        hh[12..20].copy_from_slice(&start_header_offset_le);
+        let start_header_len_le = ((header.len() as u64) & 0xFFFF_FFFF).to_le_bytes();
+        hh[20..28].copy_from_slice(&start_header_len_le);
+        hh[28..32].copy_from_slice(&crc32.to_le_bytes());
         let crc32 = crc32fast::hash(&hh[12..]);
         hh[8..12].copy_from_slice(&crc32.to_le_bytes());
 
@@ -373,18 +397,22 @@ impl<W: AsyncWrite + AsyncSeek + Unpin> ArchiveWriter<W> {
         Ok(self.output)
     }
 
-    fn write_header<H: Write>(&mut self, header: &mut H) -> std::io::Result<()> {
-        header.write_u8(K_HEADER)?;
-        header.write_u8(K_MAIN_STREAMS_INFO)?;
-        self.write_streams_info(header)?;
-        self.write_files_info(header)?;
-        header.write_u8(K_END)?;
+    async fn write_header<H: AsyncWrite + Unpin>(&mut self, header: &mut H) -> std::io::Result<()> {
+        AsyncWriteExt::write_all(header, &[K_HEADER]).await?;
+        AsyncWriteExt::write_all(header, &[K_MAIN_STREAMS_INFO]).await?;
+        self.write_streams_info(header).await?;
+        self.write_files_info(header).await?;
+        AsyncWriteExt::write_all(header, &[K_END]).await?;
         Ok(())
     }
 
-    async fn write_encoded_header<H: Write>(&mut self, header: &mut H) -> std::io::Result<()> {
-        let mut raw_header = Vec::with_capacity(64 * 1024);
-        self.write_header(&mut raw_header)?;
+    async fn write_encoded_header<H: AsyncWrite + Unpin>(
+        &mut self,
+        header: &mut H,
+    ) -> std::io::Result<()> {
+        let mut raw_header_cursor = futures::io::Cursor::new(Vec::with_capacity(64 * 1024));
+        self.write_header(&mut raw_header_cursor).await?;
+        let raw_header = raw_header_cursor.into_inner();
         let mut pack_info = PackInfo::default();
 
         let position = AsyncSeekExt::stream_position(&mut self.output).await?;
@@ -424,8 +452,7 @@ impl<W: AsyncWrite + AsyncSeek + Unpin> ArchiveWriter<W> {
         let compress_crc = compressed.crc_value();
         let compress_size = *compressed.bytes_written;
         if compress_size as u64 + 20 >= size {
-            // compression made it worse. Write raw data
-            header.write_all(&raw_header)?;
+            AsyncWriteExt::write_all(header, &raw_header).await?;
             return Ok(());
         }
         let encoded_data = encoded_cursor.into_inner();
@@ -439,44 +466,50 @@ impl<W: AsyncWrite + AsyncSeek + Unpin> ArchiveWriter<W> {
         sizes.push(size);
         unpack_info.add(methods, sizes, crc32);
 
-        header.write_u8(K_ENCODED_HEADER)?;
+        AsyncWriteExt::write_all(header, &[K_ENCODED_HEADER]).await?;
 
-        pack_info.write_to(header)?;
-        unpack_info.write_to(header)?;
-        unpack_info.write_substreams(header)?;
+        pack_info.write_to(header).await?;
+        unpack_info.write_to(header).await?;
+        unpack_info.write_substreams(header).await?;
 
-        header.write_u8(K_END)?;
+        AsyncWriteExt::write_all(header, &[K_END]).await?;
 
         Ok(())
     }
 
-    fn write_streams_info<H: Write>(&mut self, header: &mut H) -> std::io::Result<()> {
+    async fn write_streams_info<H: AsyncWrite + Unpin>(
+        &mut self,
+        header: &mut H,
+    ) -> std::io::Result<()> {
         if self.pack_info.len() > 0 {
-            self.pack_info.write_to(header)?;
-            self.unpack_info.write_to(header)?;
+            self.pack_info.write_to(header).await?;
+            self.unpack_info.write_to(header).await?;
         }
-        self.unpack_info.write_substreams(header)?;
+        self.unpack_info.write_substreams(header).await?;
 
-        header.write_u8(K_END)?;
+        AsyncWriteExt::write_all(header, &[K_END]).await?;
         Ok(())
     }
 
-    fn write_files_info<H: Write>(&self, header: &mut H) -> std::io::Result<()> {
-        header.write_u8(K_FILES_INFO)?;
-        write_u64(header, self.files.len() as u64)?;
-        self.write_file_empty_streams(header)?;
-        self.write_file_empty_files(header)?;
-        self.write_file_anti_items(header)?;
-        self.write_file_names(header)?;
-        self.write_file_ctimes(header)?;
-        self.write_file_atimes(header)?;
-        self.write_file_mtimes(header)?;
-        self.write_file_windows_attrs(header)?;
-        header.write_u8(K_END)?;
+    async fn write_files_info<H: AsyncWrite + Unpin>(&self, header: &mut H) -> std::io::Result<()> {
+        AsyncWriteExt::write_all(header, &[K_FILES_INFO]).await?;
+        write_encoded_u64(header, self.files.len() as u64).await?;
+        self.write_file_empty_streams(header).await?;
+        self.write_file_empty_files(header).await?;
+        self.write_file_anti_items(header).await?;
+        self.write_file_names(header).await?;
+        self.write_file_ctimes(header).await?;
+        self.write_file_atimes(header).await?;
+        self.write_file_mtimes(header).await?;
+        self.write_file_windows_attrs(header).await?;
+        AsyncWriteExt::write_all(header, &[K_END]).await?;
         Ok(())
     }
 
-    fn write_file_empty_streams<H: Write>(&self, header: &mut H) -> std::io::Result<()> {
+    async fn write_file_empty_streams<H: AsyncWrite + Unpin>(
+        &self,
+        header: &mut H,
+    ) -> std::io::Result<()> {
         let mut has_empty = false;
         for entry in self.files.iter() {
             if !entry.has_stream {
@@ -485,22 +518,24 @@ impl<W: AsyncWrite + AsyncSeek + Unpin> ArchiveWriter<W> {
             }
         }
         if has_empty {
-            header.write_u8(K_EMPTY_STREAM)?;
+            AsyncWriteExt::write_all(header, &[K_EMPTY_STREAM]).await?;
             let mut bitset = BitSet::with_capacity(self.files.len());
             for (i, entry) in self.files.iter().enumerate() {
                 if !entry.has_stream {
                     bitset.insert(i);
                 }
             }
-            let mut temp: Vec<u8> = Vec::with_capacity(bitset.len() / 8 + 1);
-            write_bit_set(&mut temp, &bitset)?;
-            write_u64(header, temp.len() as u64)?;
-            header.write_all(temp.as_slice())?;
+            let temp = bitset_to_bytes(&bitset, self.files.len());
+            write_encoded_u64(header, temp.len() as u64).await?;
+            AsyncWriteExt::write_all(header, &temp).await?;
         }
         Ok(())
     }
 
-    fn write_file_empty_files<H: Write>(&self, header: &mut H) -> std::io::Result<()> {
+    async fn write_file_empty_files<H: AsyncWrite + Unpin>(
+        &self,
+        header: &mut H,
+    ) -> std::io::Result<()> {
         let mut has_empty = false;
         let mut empty_stream_counter = 0;
         let mut bitset = BitSet::new();
@@ -515,17 +550,19 @@ impl<W: AsyncWrite + AsyncSeek + Unpin> ArchiveWriter<W> {
             }
         }
         if has_empty {
-            header.write_u8(K_EMPTY_FILE)?;
+            AsyncWriteExt::write_all(header, &[K_EMPTY_FILE]).await?;
 
-            let mut temp: Vec<u8> = Vec::with_capacity(bitset.len() / 8 + 1);
-            write_bit_set(&mut temp, &bitset)?;
-            write_u64(header, temp.len() as u64)?;
-            header.write_all(&temp)?;
+            let temp = bitset_to_bytes(&bitset, empty_stream_counter);
+            write_encoded_u64(header, temp.len() as u64).await?;
+            AsyncWriteExt::write_all(header, &temp).await?;
         }
         Ok(())
     }
 
-    fn write_file_anti_items<H: Write>(&self, header: &mut H) -> std::io::Result<()> {
+    async fn write_file_anti_items<H: AsyncWrite + Unpin>(
+        &self,
+        header: &mut H,
+    ) -> std::io::Result<()> {
         let mut has_anti = false;
         let mut counter = 0;
         let mut bitset = BitSet::new();
@@ -540,30 +577,27 @@ impl<W: AsyncWrite + AsyncSeek + Unpin> ArchiveWriter<W> {
             }
         }
         if has_anti {
-            header.write_u8(K_ANTI)?;
+            AsyncWriteExt::write_all(header, &[K_ANTI]).await?;
 
-            let mut temp: Vec<u8> = Vec::with_capacity(bitset.len() / 8 + 1);
-            write_bit_set(&mut temp, &bitset)?;
-            write_u64(header, temp.len() as u64)?;
-            header.write_all(temp.as_slice())?;
+            let temp = bitset_to_bytes(&bitset, counter);
+            write_encoded_u64(header, temp.len() as u64).await?;
+            AsyncWriteExt::write_all(header, &temp).await?;
         }
         Ok(())
     }
 
-    fn write_file_names<H: Write>(&self, header: &mut H) -> std::io::Result<()> {
-        header.write_u8(K_NAME)?;
+    async fn write_file_names<H: AsyncWrite + Unpin>(&self, header: &mut H) -> std::io::Result<()> {
+        AsyncWriteExt::write_all(header, &[K_NAME]).await?;
         let mut temp: Vec<u8> = Vec::with_capacity(128);
-        let out = &mut temp;
-        out.write_u8(0)?;
+        temp.push(0);
         for file in self.files.iter() {
             for c in file.name().encode_utf16() {
-                let buf = c.to_le_bytes();
-                Write::write_all(out, &buf)?;
+                temp.extend_from_slice(&c.to_le_bytes());
             }
-            Write::write_all(out, &[0u8; 2])?;
+            temp.extend_from_slice(&[0u8; 2]);
         }
-        write_u64(header, temp.len() as u64)?;
-        header.write_all(temp.as_slice())?;
+        write_encoded_u64(header, temp.len() as u64).await?;
+        AsyncWriteExt::write_all(header, &temp).await?;
         Ok(())
     }
 
@@ -595,26 +629,57 @@ impl<W: AsyncWrite + AsyncSeek + Unpin> AutoFinish for ArchiveWriter<W> {
     }
 }
 
-pub(crate) fn write_u64<W: Write>(header: &mut W, mut value: u64) -> std::io::Result<()> {
-    let mut first = 0;
-    let mut mask = 0x80;
-    let mut i = 0;
-    while i < 8 {
-        if value < (1u64 << (7 * (i + 1))) {
-            first |= value >> (8 * i);
+pub(crate) async fn write_encoded_u64<W: AsyncWrite + Unpin>(
+    header: &mut W,
+    mut value: u64,
+) -> std::io::Result<()> {
+    let mut first = 0u64;
+    let mut mask = 0x80u64;
+    let mut i = 0u8;
+    while (i as usize) < 8 {
+        if value < (1u64 << (7 * (i as usize + 1))) {
+            first |= value >> (8 * i as usize);
             break;
         }
         first |= mask;
         mask >>= 1;
         i += 1;
     }
-    header.write_u8((first & 0xFF) as u8)?;
+    AsyncWriteExt::write_all(header, &[(first & 0xFF) as u8]).await?;
     while i > 0 {
-        header.write_u8((value & 0xFF) as u8)?;
+        AsyncWriteExt::write_all(header, &[(value & 0xFF) as u8]).await?;
         value >>= 8;
         i -= 1;
     }
     Ok(())
+}
+
+fn vec_push_le_u64(buf: &mut Vec<u8>, value: u64) {
+    buf.extend_from_slice(&value.to_le_bytes());
+}
+
+fn vec_push_le_u32(buf: &mut Vec<u8>, value: u32) {
+    buf.extend_from_slice(&value.to_le_bytes());
+}
+
+pub(crate) fn bitset_to_bytes(bs: &BitSet, capacity: usize) -> Vec<u8> {
+    let mut out = Vec::with_capacity((capacity / 8).saturating_add(1));
+    let mut cache = 0u8;
+    let mut shift: i32 = 7;
+    for i in 0..capacity {
+        let set = if bs.contains(i) { 1 } else { 0 };
+        cache |= (set as u8) << shift;
+        shift -= 1;
+        if shift < 0 {
+            out.push(cache);
+            shift = 7;
+            cache = 0;
+        }
+    }
+    if shift != 7 {
+        out.push(cache);
+    }
+    out
 }
 
 struct CompressWrapWriter<'a, W> {

@@ -1,4 +1,4 @@
-use std::{io::Write, sync::Arc};
+use std::sync::Arc;
 
 use super::*;
 use crate::EncoderConfiguration;
@@ -42,37 +42,43 @@ impl UnpackInfo {
         })
     }
 
-    pub(crate) fn write_to<H: Write>(&mut self, header: &mut H) -> std::io::Result<()> {
-        header.write_u8(K_UNPACK_INFO)?;
-        header.write_u8(K_FOLDER)?;
-        write_u64(header, self.blocks.len() as u64)?;
-        header.write_u8(0)?;
+    pub(crate) async fn write_to<W: AsyncWrite + Unpin>(
+        &mut self,
+        header: &mut W,
+    ) -> std::io::Result<()> {
+        AsyncWriteExt::write_all(header, &[K_UNPACK_INFO]).await?;
+        AsyncWriteExt::write_all(header, &[K_FOLDER]).await?;
+        write_encoded_u64(header, self.blocks.len() as u64).await?;
+        AsyncWriteExt::write_all(header, &[0]).await?;
         let mut cache = Vec::with_capacity(32);
         for block in self.blocks.iter() {
-            block.write_to(header, &mut cache)?;
+            block.write_to(header, &mut cache).await?;
         }
-        header.write_u8(K_CODERS_UNPACK_SIZE)?;
+        AsyncWriteExt::write_all(header, &[K_CODERS_UNPACK_SIZE]).await?;
         for block in self.blocks.iter() {
             for size in block.sizes.iter().copied() {
-                write_u64(header, size)?;
+                write_encoded_u64(header, size).await?;
             }
         }
         // 7zip doesn't write CRC values in the folder section of the unpack info. Instead,
         // it writes it only in the substreams info (even for non-solid archives).
-        header.write_u8(K_END)?;
+        AsyncWriteExt::write_all(header, &[K_END]).await?;
         Ok(())
     }
 
-    pub(crate) fn write_substreams<H: Write>(&self, header: &mut H) -> std::io::Result<()> {
-        header.write_u8(K_SUB_STREAMS_INFO)?;
+    pub(crate) async fn write_substreams<W: AsyncWrite + Unpin>(
+        &self,
+        header: &mut W,
+    ) -> std::io::Result<()> {
+        AsyncWriteExt::write_all(header, &[K_SUB_STREAMS_INFO]).await?;
 
         // Only write K_NUM_UNPACK_STREAM if any folder has != 1 substream.
         let needs_num_unpack_stream = self.blocks.iter().any(|f| f.num_sub_unpack_streams != 1);
 
         if needs_num_unpack_stream {
-            header.write_u8(K_NUM_UNPACK_STREAM)?;
+            AsyncWriteExt::write_all(header, &[K_NUM_UNPACK_STREAM]).await?;
             for f in &self.blocks {
-                write_u64(header, f.num_sub_unpack_streams)?;
+                write_encoded_u64(header, f.num_sub_unpack_streams).await?;
             }
         }
 
@@ -80,7 +86,7 @@ impl UnpackInfo {
         let needs_sizes = self.blocks.iter().any(|f| f.sub_stream_sizes.len() > 1);
 
         if needs_sizes {
-            header.write_u8(K_SIZE)?;
+            AsyncWriteExt::write_all(header, &[K_SIZE]).await?;
             for f in &self.blocks {
                 if f.sub_stream_sizes.len() > 1 {
                     debug_assert_eq!(f.sub_stream_sizes.len(), f.num_sub_unpack_streams as usize);
@@ -88,7 +94,7 @@ impl UnpackInfo {
                     // Write N-1 sizes (last size is calculated).
                     for i in 0..f.sub_stream_sizes.len() - 1 {
                         let size = f.sub_stream_sizes[i];
-                        write_u64(header, size)?;
+                        write_encoded_u64(header, size).await?;
                     }
                 }
             }
@@ -116,14 +122,14 @@ impl UnpackInfo {
         }
 
         if !crcs_to_write.is_empty() {
-            header.write_u8(K_CRC)?;
-            header.write_u8(1)?; // all CRCs defined.
+            AsyncWriteExt::write_all(header, &[K_CRC]).await?;
+            AsyncWriteExt::write_all(header, &[1]).await?; // all CRCs defined.
             for crc in crcs_to_write {
-                header.write_u32(crc)?;
+                AsyncWriteExt::write_all(header, &crc.to_le_bytes()).await?;
             }
         }
 
-        header.write_u8(K_END)?;
+        AsyncWriteExt::write_all(header, &[K_END]).await?;
         Ok(())
     }
 }
@@ -139,7 +145,7 @@ pub(crate) struct BlockInfo {
 }
 
 impl BlockInfo {
-    pub(crate) fn write_to<W: Write>(
+    pub(crate) async fn write_to<W: AsyncWrite + Unpin>(
         &self,
         header: &mut W,
         cache: &mut Vec<u8>,
@@ -148,21 +154,21 @@ impl BlockInfo {
         let mut num_coders = 0;
         for mc in self.methods.iter() {
             num_coders += 1;
-            self.write_single_codec(mc, cache)?;
+            self.write_single_codec(mc, cache).await?;
         }
-        write_u64(header, num_coders as u64)?;
-        header.write_all(cache)?;
+        write_encoded_u64(header, num_coders as u64).await?;
+        AsyncWriteExt::write_all(header, cache).await?;
         for i in 0..num_coders - 1 {
-            write_u64(header, i as u64 + 1)?;
-            write_u64(header, i as u64)?;
+            write_encoded_u64(header, i as u64 + 1).await?;
+            write_encoded_u64(header, i as u64).await?;
         }
         Ok(())
     }
 
-    fn write_single_codec<H: Write>(
+    async fn write_single_codec<W: AsyncWrite + Unpin>(
         &self,
         mc: &EncoderConfiguration,
-        out: &mut H,
+        out: &mut W,
     ) -> std::io::Result<()> {
         let id = mc.method.id();
         let mut temp = [0u8; 256];
@@ -171,11 +177,11 @@ impl BlockInfo {
         if !props.is_empty() {
             codec_flags |= 0x20;
         }
-        out.write_u8(codec_flags)?;
-        out.write_all(id)?;
+        AsyncWriteExt::write_all(out, &[codec_flags]).await?;
+        AsyncWriteExt::write_all(out, id).await?;
         if !props.is_empty() {
-            out.write_u8(props.len() as u8)?;
-            out.write_all(props)?;
+            AsyncWriteExt::write_all(out, &[props.len() as u8]).await?;
+            AsyncWriteExt::write_all(out, props).await?;
         }
         Ok(())
     }

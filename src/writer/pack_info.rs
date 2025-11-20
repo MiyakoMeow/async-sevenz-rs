@@ -8,23 +8,26 @@ pub(crate) struct PackInfo {
 }
 
 impl PackInfo {
-    pub(crate) fn write_to<H: Write>(&mut self, header: &mut H) -> std::io::Result<()> {
-        header.write_u8(K_PACK_INFO)?;
-        write_u64(header, self.pos)?;
-        write_u64(header, self.len() as u64)?;
-        header.write_u8(K_SIZE)?;
+    pub(crate) async fn write_to<W: AsyncWrite + Unpin>(
+        &mut self,
+        header: &mut W,
+    ) -> std::io::Result<()> {
+        AsyncWriteExt::write_all(header, &[K_PACK_INFO]).await?;
+        write_encoded_u64(header, self.pos).await?;
+        write_encoded_u64(header, self.len() as u64).await?;
+        AsyncWriteExt::write_all(header, &[K_SIZE]).await?;
         for size in &self.sizes {
-            write_u64(header, *size)?;
+            write_encoded_u64(header, *size).await?;
         }
-        header.write_u8(K_CRC)?;
+        AsyncWriteExt::write_all(header, &[K_CRC]).await?;
         let all_crc_defined = self.crcs.iter().all(|f| *f != 0);
         if all_crc_defined {
-            header.write_u8(1)?; // all defined
+            AsyncWriteExt::write_all(header, &[1]).await?; // all defined
             for crc in self.crcs.iter() {
-                header.write_u32(*crc)?;
+                AsyncWriteExt::write_all(header, &crc.to_le_bytes()).await?;
             }
         } else {
-            header.write_u8(0)?; // not all defined
+            AsyncWriteExt::write_all(header, &[0]).await?; // not all defined
             let mut crc_define_bits = BitSet::with_capacity(self.crcs.len());
 
             for (i, crc) in self.crcs.iter().cloned().enumerate() {
@@ -32,12 +35,11 @@ impl PackInfo {
                     crc_define_bits.insert(i);
                 }
             }
-            let mut temp = Vec::with_capacity(self.len());
-            write_bit_set(&mut temp, &crc_define_bits)?;
-            header.write_all(&temp)?;
+            let temp = bitset_to_bytes(&crc_define_bits, self.crcs.len());
+            AsyncWriteExt::write_all(header, &temp).await?;
         }
 
-        header.write_u8(K_END)?;
+        AsyncWriteExt::write_all(header, &[K_END]).await?;
         Ok(())
     }
 }
