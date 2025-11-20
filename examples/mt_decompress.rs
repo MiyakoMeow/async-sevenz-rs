@@ -13,7 +13,7 @@ use sevenz_rust2::{Archive, BlockDecoder, Password};
 fn main() {
     let time = std::time::Instant::now();
     let password = Password::empty();
-    let archive = smol::block_on(Archive::open_with_password_async(
+    let archive = smol::block_on(Archive::open_with_password(
         "examples/data/sample.7z",
         &password,
     ))
@@ -43,10 +43,10 @@ fn main() {
             let block_decoder = BlockDecoder::new(4, block_index, &archive, &password, &mut source);
 
             let dest = PathBuf::from("examples/data/sample_mt/");
-            smol::block_on(block_decoder.for_each_entries_async(&mut |entry, reader| {
+            smol::block_on(block_decoder.for_each_entries(&mut |entry, reader| {
                 let dest = dest.join(entry.name());
                 Box::pin(async move {
-                    sevenz_rust2::default_entry_extract_fn_async(entry, reader, &dest).await?;
+                    sevenz_rust2::default_entry_extract_fn(entry, reader, &dest).await?;
                     Ok(true)
                 })
             }))

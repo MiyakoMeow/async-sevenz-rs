@@ -210,11 +210,8 @@ fn test_compression_method(methods: &[EncoderConfiguration]) {
         bytes = cursor.into_inner();
     }
 
-    let mut reader = smol::block_on(ArchiveReader::open_from_bytes_async(
-        bytes,
-        Password::empty(),
-    ))
-    .unwrap();
+    let mut reader =
+        smol::block_on(ArchiveReader::open_from_bytes(bytes, Password::empty())).unwrap();
 
     assert_eq!(reader.archive().files.len(), 2);
 
@@ -249,7 +246,7 @@ fn test_compression_method(methods: &[EncoderConfiguration]) {
             .any(|file| file.name() == "data/decompress_x86.exe")
     );
 
-    let data = smol::block_on(reader.read_file_async("data/decompress_x86.exe")).unwrap();
+    let data = smol::block_on(reader.read_file("data/decompress_x86.exe")).unwrap();
 
     fn hash(data: &[u8]) -> u64 {
         let mut hasher = std::collections::hash_map::DefaultHasher::new();

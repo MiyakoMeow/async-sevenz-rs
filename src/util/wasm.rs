@@ -32,7 +32,7 @@ pub fn decompress(src: Uint8Array, pwd: &str, f: &Function) -> Result<(), String
     .map_err(|e| e.to_string())?;
     let mut seven =
         block_on(ArchiveReader::new(src_reader, Password::from(pwd))).map_err(|e| e.to_string())?;
-    block_on(seven.for_each_entries_async(|entry, reader| {
+    block_on(seven.for_each_entries(|entry, reader| {
         if !entry.is_directory() {
             let path = entry.name();
 

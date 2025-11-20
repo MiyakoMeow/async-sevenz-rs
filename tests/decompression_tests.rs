@@ -236,7 +236,7 @@ fn decompress_zstdmt_lz4_file() {
 
 #[test]
 fn test_bcj2() {
-    let archive = smol::block_on(Archive::open_with_password_async(
+    let archive = smol::block_on(Archive::open_with_password(
         "tests/resources/7za433_7zip_lzma2_bcj2.7z",
         &Password::empty(),
     ))
@@ -248,7 +248,7 @@ fn test_bcj2() {
         let mut cursor = futures::io::Cursor::new(data);
         let fd = BlockDecoder::new(1, i, &archive, &password, &mut cursor);
         println!("entry_count:{}", fd.entry_count());
-        smol::block_on(fd.for_each_entries_async(&mut |entry, reader| {
+        smol::block_on(fd.for_each_entries(&mut |entry, reader| {
             println!("{}=>{:?}", entry.has_stream, entry.name());
             Box::pin(async move {
                 let mut buf = Vec::new();
@@ -268,8 +268,7 @@ fn test_entry_compressed_size() {
         if path.to_string_lossy().ends_with("7z") {
             println!("{path:?}");
             let archive =
-                smol::block_on(Archive::open_with_password_async(&path, &Password::empty()))
-                    .unwrap();
+                smol::block_on(Archive::open_with_password(&path, &Password::empty())).unwrap();
             for i in 0..archive.blocks.len() {
                 let fi = archive.stream_map.block_first_file_index[i];
                 let file = &archive.files[fi];
@@ -290,12 +289,12 @@ fn test_entry_compressed_size() {
 #[test]
 fn test_get_file_by_path() {
     // non_solid.7z and solid.7z are expected to have the same content.
-    let mut non_solid_reader = smol::block_on(ArchiveReader::open_async(
+    let mut non_solid_reader = smol::block_on(ArchiveReader::open(
         "tests/resources/non_solid.7z",
         Password::empty(),
     ))
     .unwrap();
-    let mut solid_reader = smol::block_on(ArchiveReader::open_async(
+    let mut solid_reader = smol::block_on(ArchiveReader::open(
         "tests/resources/solid.7z",
         Password::empty(),
     ))
@@ -310,8 +309,8 @@ fn test_get_file_by_path() {
         .collect();
 
     for path in paths.iter() {
-        let data0 = smol::block_on(non_solid_reader.read_file_async(path.as_str())).unwrap();
-        let data1 = smol::block_on(solid_reader.read_file_async(path.as_str())).unwrap();
+        let data0 = smol::block_on(non_solid_reader.read_file(path.as_str())).unwrap();
+        let data1 = smol::block_on(solid_reader.read_file(path.as_str())).unwrap();
 
         assert!(!data0.is_empty());
         assert!(!data1.is_empty());

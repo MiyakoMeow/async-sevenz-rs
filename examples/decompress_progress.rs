@@ -5,7 +5,7 @@ use std::path::PathBuf;
 
 fn main() {
     let total_size = {
-        let sz = smol::block_on(sevenz_rust2::ArchiveReader::open_async(
+        let sz = smol::block_on(sevenz_rust2::ArchiveReader::open(
             "examples/data/sample.7z",
             Password::from("pass"),
         ))

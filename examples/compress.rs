@@ -78,9 +78,8 @@ fn main() {
     smol::block_on(afs::write(&output_path, data))
         .unwrap_or_else(|error| panic!("Failed to write output file '{output_path}': {error}"));
 
-    let _archive_reader =
-        smol::block_on(ArchiveReader::open_async(&output_path, Password::empty()))
-            .unwrap_or_else(|error| panic!("Failed to open output file '{output_path}': {error}"));
+    let _archive_reader = smol::block_on(ArchiveReader::open(&output_path, Password::empty()))
+        .unwrap_or_else(|error| panic!("Failed to open output file '{output_path}': {error}"));
 
     println!("Archive created: {output_path}");
     println!("Compress done: {:?}", now.elapsed());

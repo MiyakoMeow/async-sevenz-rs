@@ -5,7 +5,7 @@ use sevenz_rust2::{Archive, BlockDecoder, Password};
 
 fn main() {
     let password = Password::empty();
-    let archive = smol::block_on(Archive::open_with_password_async(
+    let archive = smol::block_on(Archive::open_with_password(
         "examples/data/sample.7z",
         &password,
     ))
@@ -28,11 +28,11 @@ fn main() {
         }
         let dest = PathBuf::from("examples/data/sample_mt/");
 
-        smol::block_on(forder_dec.for_each_entries_async(&mut |entry, reader| {
+        smol::block_on(forder_dec.for_each_entries(&mut |entry, reader| {
             if entry.name() == my_file_name {
                 let dest = dest.join(entry.name());
                 Box::pin(async move {
-                    sevenz_rust2::default_entry_extract_fn_async(entry, reader, &dest).await?;
+                    sevenz_rust2::default_entry_extract_fn(entry, reader, &dest).await?;
                     Ok(true)
                 })
             } else {

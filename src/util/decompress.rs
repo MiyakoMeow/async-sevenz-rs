@@ -49,11 +49,11 @@ pub async fn decompress_file(
     dest: impl AsRef<Path>,
 ) -> Result<(), Error> {
     let dest_path = dest.as_ref().to_path_buf();
-    decompress_path_impl_async(
+    decompress_path_impl(
         src_path.as_ref(),
         dest_path,
         Password::empty(),
-        |entry, reader, dest| Box::pin(default_entry_extract_fn_async(entry, reader, dest)),
+        |entry, reader, dest| Box::pin(default_entry_extract_fn(entry, reader, dest)),
     )
     .await
 }
@@ -77,7 +77,7 @@ pub async fn decompress_file_with_extract_fn(
     ) -> Pin<Box<dyn Future<Output = Result<bool, Error>> + 'a>>
     + 'static,
 ) -> Result<(), Error> {
-    decompress_path_impl_async(
+    decompress_path_impl(
         src_path.as_ref(),
         dest.as_ref().to_path_buf(),
         Password::empty(),
@@ -97,11 +97,11 @@ pub async fn decompress<R: AsyncRead + AsyncSeek + Unpin>(
 ) -> Result<(), Error> {
     let pos = AsyncSeekExt::stream_position(&mut src_reader).await?;
     AsyncSeekExt::seek(&mut src_reader, futures::io::SeekFrom::Start(pos)).await?;
-    decompress_impl_async(
+    decompress_impl(
         src_reader,
         dest,
         Password::empty(),
-        |entry, reader, dest| Box::pin(default_entry_extract_fn_async(entry, reader, dest)),
+        |entry, reader, dest| Box::pin(default_entry_extract_fn(entry, reader, dest)),
     )
     .await
 }
@@ -127,7 +127,7 @@ pub async fn decompress_with_extract_fn<R: AsyncRead + AsyncSeek + Unpin>(
 ) -> Result<(), Error> {
     let pos = AsyncSeekExt::stream_position(&mut src_reader).await?;
     AsyncSeekExt::seek(&mut src_reader, futures::io::SeekFrom::Start(pos)).await?;
-    decompress_impl_async(src_reader, dest, Password::empty(), extract_fn).await
+    decompress_impl(src_reader, dest, Password::empty(), extract_fn).await
 }
 
 /// Decompresses an encrypted archive file with the given password.
@@ -143,11 +143,11 @@ pub async fn decompress_file_with_password(
     password: Password,
 ) -> Result<(), Error> {
     let dest_path = dest.as_ref().to_path_buf();
-    decompress_path_impl_async(
+    decompress_path_impl(
         src_path.as_ref(),
         dest_path,
         password,
-        |entry, reader, dest| Box::pin(default_entry_extract_fn_async(entry, reader, dest)),
+        |entry, reader, dest| Box::pin(default_entry_extract_fn(entry, reader, dest)),
     )
     .await
 }
@@ -166,8 +166,8 @@ pub async fn decompress_with_password<R: AsyncRead + AsyncSeek + Unpin>(
 ) -> Result<(), Error> {
     let pos = AsyncSeekExt::stream_position(&mut src_reader).await?;
     AsyncSeekExt::seek(&mut src_reader, futures::io::SeekFrom::Start(pos)).await?;
-    decompress_impl_async(src_reader, dest, password, |entry, reader, dest| {
-        Box::pin(default_entry_extract_fn_async(entry, reader, dest))
+    decompress_impl(src_reader, dest, password, |entry, reader, dest| {
+        Box::pin(default_entry_extract_fn(entry, reader, dest))
     })
     .await
 }
@@ -196,12 +196,12 @@ pub async fn decompress_with_extract_fn_and_password<R: AsyncRead + AsyncSeek + 
 ) -> Result<(), Error> {
     let pos = AsyncSeekExt::stream_position(&mut src_reader).await?;
     AsyncSeekExt::seek(&mut src_reader, futures::io::SeekFrom::Start(pos)).await?;
-    decompress_impl_async(src_reader, dest, password, extract_fn).await
+    decompress_impl(src_reader, dest, password, extract_fn).await
 }
 
 #[cfg(not(target_arch = "wasm32"))]
 #[allow(clippy::await_holding_refcell_ref)]
-async fn decompress_impl_async<R: AsyncRead + AsyncSeek + Unpin>(
+async fn decompress_impl<R: AsyncRead + AsyncSeek + Unpin>(
     mut src_reader: R,
     dest: impl AsRef<Path>,
     password: Password,
@@ -221,7 +221,7 @@ async fn decompress_impl_async<R: AsyncRead + AsyncSeek + Unpin>(
     }
     let extract_fn_cell = std::rc::Rc::new(std::cell::RefCell::new(extract_fn));
     seven
-        .for_each_entries_async(|entry, reader| {
+        .for_each_entries(|entry, reader| {
             let dest_path = dest.join(entry.name());
             let extract_fn_cell = std::rc::Rc::clone(&extract_fn_cell);
             Box::pin(async move {
@@ -238,7 +238,7 @@ async fn decompress_impl_async<R: AsyncRead + AsyncSeek + Unpin>(
 
 #[cfg(not(target_arch = "wasm32"))]
 #[allow(clippy::await_holding_refcell_ref)]
-async fn decompress_path_impl_async(
+async fn decompress_path_impl(
     src_path: &Path,
     dest: PathBuf,
     password: Password,
@@ -249,13 +249,13 @@ async fn decompress_path_impl_async(
     ) -> Pin<Box<dyn Future<Output = Result<bool, Error>> + 'a>>
     + 'static,
 ) -> Result<(), Error> {
-    let mut seven = ArchiveReader::open_async(src_path, password).await?;
+    let mut seven = ArchiveReader::open(src_path, password).await?;
     if !dest.exists() {
         afs::create_dir_all(&dest).await?;
     }
     let extract_fn_cell = std::rc::Rc::new(std::cell::RefCell::new(extract_fn));
     seven
-        .for_each_entries_async(|entry, reader| {
+        .for_each_entries(|entry, reader| {
             let dest_path = dest.join(entry.name());
             let extract_fn_cell = std::rc::Rc::clone(&extract_fn_cell);
             Box::pin(async move {
@@ -276,7 +276,7 @@ async fn decompress_path_impl_async(
 /// * `reader` - Reader for the entry's data
 /// * `dest` - Destination path for the entry
 #[cfg(not(target_arch = "wasm32"))]
-pub async fn default_entry_extract_fn_async(
+pub async fn default_entry_extract_fn(
     entry: &ArchiveEntry,
     reader: &mut (dyn futures::io::AsyncRead + Unpin),
     dest: &Path,

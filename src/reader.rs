@@ -183,7 +183,7 @@ impl Archive {
     ///
     /// Returns the parsed `Archive` metadata without decoding file contents.
     #[cfg(not(target_arch = "wasm32"))]
-    pub async fn open_async(path: impl AsRef<std::path::Path>) -> Result<Archive, Error> {
+    pub async fn open(path: impl AsRef<std::path::Path>) -> Result<Archive, Error> {
         let data = afs::read(path.as_ref())
             .await
             .map_err(|e| Error::file_open(e, path.as_ref().to_string_lossy().to_string()))?;
@@ -195,7 +195,7 @@ impl Archive {
     ///
     /// Returns the parsed `Archive` metadata without decoding file contents.
     #[cfg(not(target_arch = "wasm32"))]
-    pub async fn open_with_password_async(
+    pub async fn open_with_password(
         path: impl AsRef<std::path::Path>,
         password: &Password,
     ) -> Result<Archive, Error> {
@@ -218,7 +218,7 @@ impl Archive {
     /// use sevenz_rust2::*;
     ///
     /// let password = Password::from("the password");
-    /// let archive = smol::block_on(Archive::open_with_password_async("example.7z", &password)).unwrap();
+    /// let archive = smol::block_on(Archive::open_with_password("example.7z", &password)).unwrap();
     ///
     /// for entry in &archive.files {
     ///     println!("{}", entry.name());
@@ -1147,7 +1147,7 @@ pub struct ArchiveReader<R: futures::io::AsyncRead + futures::io::AsyncSeek + Un
 #[cfg(not(target_arch = "wasm32"))]
 impl ArchiveReader<futures::io::Cursor<Vec<u8>>> {
     /// Opens a 7z archive file asynchronously and creates an `ArchiveReader` using an in-memory buffer.
-    pub async fn open_async(
+    pub async fn open(
         path: impl AsRef<std::path::Path>,
         password: Password,
     ) -> Result<Self, Error> {
@@ -1159,7 +1159,7 @@ impl ArchiveReader<futures::io::Cursor<Vec<u8>>> {
     }
 
     /// Opens a 7z archive from in-memory bytes asynchronously.
-    pub async fn open_from_bytes_async(data: Vec<u8>, password: Password) -> Result<Self, Error> {
+    pub async fn open_from_bytes(data: Vec<u8>, password: Password) -> Result<Self, Error> {
         let cursor = futures::io::Cursor::new(data);
         Self::new(cursor, password).await
     }
@@ -1495,7 +1495,7 @@ impl<R: futures::io::AsyncRead + futures::io::AsyncSeek + Unpin> ArchiveReader<R
     }
 
     #[allow(missing_docs)]
-    pub async fn for_each_entries_async<
+    pub async fn for_each_entries<
         F: for<'a> FnMut(
             &'a ArchiveEntry,
             &'a mut (dyn futures::io::AsyncRead + Unpin + 'a),
@@ -1514,7 +1514,7 @@ impl<R: futures::io::AsyncRead + futures::io::AsyncSeek + Unpin> ArchiveReader<R
                 &mut self.source,
             );
             if !forder_dec
-                .for_each_entries_async(&mut each)
+                .for_each_entries(&mut each)
                 .await
                 .map_err(|e| e.maybe_bad_password(!self.password.is_empty()))?
             {
@@ -1540,7 +1540,7 @@ impl<R: futures::io::AsyncRead + futures::io::AsyncSeek + Unpin> ArchiveReader<R
     /// # Notice
     /// This function is very inefficient when used with solid archives, since
     /// it needs to decode all data before the actual file.
-    pub async fn read_file_async(&mut self, name: &str) -> Result<Vec<u8>, Error> {
+    pub async fn read_file(&mut self, name: &str) -> Result<Vec<u8>, Error> {
         let index_entry = *self.index.get(name).ok_or(Error::FileNotFound)?;
         let file = &self.archive.files[index_entry.file_index];
 
@@ -1565,7 +1565,7 @@ impl<R: futures::io::AsyncRead + futures::io::AsyncSeek + Unpin> ArchiveReader<R
                     &self.password,
                     &mut self.source,
                 )
-                .for_each_entries_async(&mut |archive_entry, reader| {
+                .for_each_entries(&mut |archive_entry, reader| {
                     let result_cell = Rc::clone(&result_cell);
                     Box::pin(async move {
                         let mut data = Vec::with_capacity(archive_entry.size as usize);
@@ -1716,7 +1716,7 @@ impl<'a, R: AsyncRead + AsyncSeek + Unpin> BlockDecoder<'a, R> {
     /// it, you cannot simply skip the previous data and only decompress the data in the back.
     ///
     /// Non-solid archives use one block per file and allow more effective decoding of single files.
-    pub async fn for_each_entries_async<
+    pub async fn for_each_entries<
         F: for<'b> FnMut(
             &'b ArchiveEntry,
             &'b mut (dyn futures::io::AsyncRead + Unpin + 'b),

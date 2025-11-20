@@ -2,7 +2,7 @@ use std::time::Instant;
 
 use async_fs as afs;
 use futures::io::Cursor;
-use sevenz_rust2::default_entry_extract_fn_async;
+use sevenz_rust2::default_entry_extract_fn;
 
 fn main() {
     let instant = Instant::now();
@@ -15,7 +15,7 @@ fn main() {
             |entry, reader, dest| {
                 Box::pin(async move {
                     println!("start extract {}", entry.name());
-                    let r = default_entry_extract_fn_async(entry, reader, dest).await;
+                    let r = default_entry_extract_fn(entry, reader, dest).await;
                     println!("complete extract {}", entry.name());
                     r
                 })

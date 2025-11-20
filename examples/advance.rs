@@ -54,11 +54,8 @@ fn main() {
     println!("ratio:{:?}", m.len() as f64 / unpack_size as f64);
 
     // start to decompress
-    let mut sz = smol::block_on(ArchiveReader::open_async(
-        &dest,
-        Password::new("sevenz-rust"),
-    ))
-    .expect("create reader ok");
+    let mut sz = smol::block_on(ArchiveReader::open(&dest, Password::new("sevenz-rust")))
+        .expect("create reader ok");
     assert_eq!(contents.len(), sz.archive().files.len());
     assert_eq!(1, sz.archive().blocks.len());
     let names: Vec<String> = sz
@@ -69,7 +66,7 @@ fn main() {
         .map(|f| f.name().to_string())
         .collect();
     for name in names {
-        let data = smol::block_on(sz.read_file_async(&name)).expect("read file ok");
+        let data = smol::block_on(sz.read_file(&name)).expect("read file ok");
         let content = String::from_utf8(data).unwrap();
         assert_eq!(content, contents[&name].to_string());
     }
