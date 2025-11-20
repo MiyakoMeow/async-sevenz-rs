@@ -1,4 +1,8 @@
-use std::io::{Read, Seek, Write};
+use std::io::Write;
+use std::pin::Pin;
+use std::task::{Context, Poll};
+
+use futures::io::AsyncRead;
 
 #[cfg(feature = "compress")]
 use aes::cipher::BlockEncryptMut;
@@ -27,7 +31,7 @@ pub(crate) struct Aes256Sha256Decoder<R> {
     pos: usize,
 }
 
-impl<R: Read> Aes256Sha256Decoder<R> {
+impl<R: AsyncRead + Unpin> Aes256Sha256Decoder<R> {
     pub(crate) fn new(
         input: R,
         properties: &[u8],
@@ -44,83 +48,63 @@ impl<R: Read> Aes256Sha256Decoder<R> {
             pos: 0,
         })
     }
+}
 
-    fn get_more_data(&mut self) -> std::io::Result<usize> {
+impl<R: AsyncRead + Unpin> AsyncRead for Aes256Sha256Decoder<R> {
+    fn poll_read(
+        mut self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+        buf: &mut [u8],
+    ) -> Poll<std::io::Result<usize>> {
+        if self.ostart < self.ofinish {
+            let available = self.ofinish - self.ostart;
+            let n = available.min(buf.len());
+            buf[..n].copy_from_slice(&self.obuffer[self.ostart..self.ostart + n]);
+            self.ostart += n;
+            self.pos += n;
+            return Poll::Ready(Ok(n));
+        }
+
         if self.done {
-            Ok(0)
-        } else {
-            self.ofinish = 0;
-            self.ostart = 0;
-            self.obuffer.clear();
-            let mut ibuffer = [0; 512];
-            let readin = self.input.read(&mut ibuffer)?;
-            if readin == 0 {
-                self.done = true;
-                self.ofinish = self.cipher.do_final(&mut self.obuffer)?;
-                Ok(self.ofinish)
-            } else {
-                let n = self
-                    .cipher
-                    .update(&mut ibuffer[..readin], &mut self.obuffer)?;
-                self.ofinish = n;
-                Ok(n)
-            }
-        }
-    }
-}
-
-impl<R: Read> Read for Aes256Sha256Decoder<R> {
-    fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
-        if self.ostart >= self.ofinish {
-            let mut n: usize;
-            n = self.get_more_data()?;
-            while n == 0 && !self.done {
-                n = self.get_more_data()?;
-            }
-            if n == 0 {
-                return Ok(0);
-            }
+            return Poll::Ready(Ok(0));
         }
 
-        if buf.is_empty() {
-            return Ok(0);
-        }
-        let buf_len = self.ofinish - self.ostart;
-        let size = buf_len.min(buf.len());
-        buf[..size].copy_from_slice(&self.obuffer[self.ostart..self.ostart + size]);
-        self.ostart += size;
-        self.pos += size;
-        Ok(size)
-    }
-}
+        self.ofinish = 0;
+        self.ostart = 0;
+        self.obuffer.clear();
 
-impl<R: Read + Seek> Seek for Aes256Sha256Decoder<R> {
-    fn seek(&mut self, pos: std::io::SeekFrom) -> std::io::Result<u64> {
-        let len = self.ofinish - self.ostart;
-        match pos {
-            std::io::SeekFrom::Start(p) => {
-                let n = (p as i64 - self.pos as i64).min(len as i64);
-
-                if n < 0 {
-                    Ok(0)
+        let mut ibuffer = [0u8; 512];
+        match Pin::new(&mut self.input).poll_read(cx, &mut ibuffer) {
+            Poll::Pending => Poll::Pending,
+            Poll::Ready(Ok(readin)) => {
+                if readin == 0 {
+                    self.done = true;
+                    let mut out_local = Vec::new();
+                    let n = self.cipher.do_final(&mut out_local)?;
+                    self.obuffer = out_local;
+                    self.ofinish = n;
                 } else {
-                    self.ostart += n as usize;
-                    Ok(p)
+                    let mut out_local = Vec::new();
+                    let n = self.cipher.update(&mut ibuffer[..readin], &mut out_local)?;
+                    self.obuffer = out_local;
+                    self.ofinish = n;
+                }
+
+                if self.ofinish == 0 {
+                    if self.done {
+                        Poll::Ready(Ok(0))
+                    } else {
+                        Poll::Pending
+                    }
+                } else {
+                    let count = self.ofinish.min(buf.len());
+                    buf[..count].copy_from_slice(&self.obuffer[..count]);
+                    self.ostart = count;
+                    self.pos += count;
+                    Poll::Ready(Ok(count))
                 }
             }
-            std::io::SeekFrom::End(_) => Err(std::io::Error::new(
-                std::io::ErrorKind::Unsupported,
-                "Aes256 decoder unsupport seek from end",
-            )),
-            std::io::SeekFrom::Current(n) => {
-                let n = n.min(len as i64);
-                if n < 0 {
-                    Ok(0)
-                } else {
-                    self.ostart += n as usize;
-                    Ok(self.pos as u64 + n as u64)
-                }
-            }
+            Poll::Ready(Err(e)) => Poll::Ready(Err(e)),
         }
     }
 }
@@ -321,6 +305,7 @@ impl<W: Write> Write for Aes256Sha256Encoder<W> {
 
 #[cfg(all(test, feature = "compress"))]
 mod tests {
+    use futures::io::AsyncReadExt;
     use std::io::Cursor;
 
     use super::*;
@@ -341,7 +326,7 @@ mod tests {
             Aes256Sha256Decoder::new(&mut encoded_data, &options.properties(), &password).unwrap();
 
         let mut decoded = vec![];
-        let _ = std::io::copy(&mut dec, &mut decoded).unwrap();
+        async_io::block_on(AsyncReadExt::read_to_end(&mut dec, &mut decoded)).unwrap();
         assert_eq!(&decoded[..original.len()], &original[..]);
     }
 }

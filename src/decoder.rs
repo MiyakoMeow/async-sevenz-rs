@@ -70,7 +70,7 @@ pub enum Decoder<R: AsyncRead + Unpin> {
     Zstd(Box<AsyncZstdDecoder<BufReader<R>>>),
     #[cfg(feature = "aes256")]
     /// AES-256-SHA256 加密数据流解码器。
-    Aes256Sha256(Box<AsyncStdRead<Aes256Sha256Decoder<AsyncReadSeekAsStd<R>>>>),
+    Aes256Sha256(Box<Aes256Sha256Decoder<R>>),
 }
 
 impl<R: AsyncRead + Unpin> AsyncRead for Decoder<R> {
@@ -274,9 +274,8 @@ pub fn add_decoder<I: AsyncRead + Unpin>(
             if password.is_empty() {
                 return Err(Error::PasswordRequired);
             }
-            let std_in = AsyncReadSeekAsStd::new(input);
-            let de = Aes256Sha256Decoder::new(std_in, &coder.properties, password)?;
-            Ok(Decoder::Aes256Sha256(Box::new(AsyncStdRead::new(de))))
+            let de = Aes256Sha256Decoder::new(input, &coder.properties, password)?;
+            Ok(Decoder::Aes256Sha256(Box::new(de)))
         }
         _ => Err(Error::UnsupportedCompressionMethod(
             method.name().to_string(),
