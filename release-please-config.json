@@ -1,0 +1,6 @@
+{
+    ".": {
+        "package-name": "async-sevenz",
+        "bump-minor-pre-major": true
+    }
+}
