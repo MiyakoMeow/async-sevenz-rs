@@ -51,6 +51,7 @@ jobs:
 
 
   build-wasm:
+    if: false # Not supported yet
     runs-on: ${{matrix.os}}
     strategy:
       matrix:

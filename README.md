@@ -36,6 +36,10 @@ This is a fork of [sevenz-rust2](https://github.com/hasenbanck/sevenz-rust2), th
 
 ## WASM support
 
+- [ ] WASM support is unable for now, please write issue or pull request if you have idea to fix the build problems.
+
+### Original
+
 WASM is supported, but you can't use the default features. We provide a "default_wasm" feature that contains
 all default features with the needed changes to support WASM:
 
