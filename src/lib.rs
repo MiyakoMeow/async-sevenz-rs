@@ -1,7 +1,6 @@
-//! This project is a 7z compressor/decompressor written in pure Rust.
+//! This project is an async 7z compressor/decompressor written in pure Rust.
 //!
-//! This is a fork of the original, unmaintained sevenz-rust crate to continue the development
-//! and maintenance.
+//! This is a fork of [sevenz-rust2](https://github.com/hasenbanck/sevenz-rust2), then translated the api to async with [async-compression](https://crates.io/crates/async-compression) by AI.
 //!
 //! ## Supported Codecs & filters
 //!
