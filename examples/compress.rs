@@ -1,7 +1,7 @@
 use std::{env, time::Instant};
 
 use async_fs as afs;
-use sevenz_rust2::{ArchiveReader, ArchiveWriter, Password};
+use async_sevenz::{ArchiveReader, ArchiveWriter, Password};
 
 fn main() {
     let args: Vec<String> = env::args().collect();

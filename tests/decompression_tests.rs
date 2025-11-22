@@ -4,9 +4,9 @@ use futures_lite::StreamExt;
 use std::path::PathBuf;
 
 #[cfg(feature = "util")]
-use sevenz_rust2::decompress_file;
+use async_sevenz::decompress_file;
 #[cfg(feature = "util")]
-use sevenz_rust2::{Archive, ArchiveReader, BlockDecoder, Password};
+use async_sevenz::{Archive, ArchiveReader, BlockDecoder, Password};
 #[cfg(feature = "util")]
 use tempfile::tempdir;
 

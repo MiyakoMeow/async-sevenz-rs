@@ -1,8 +1,8 @@
 #[cfg(all(feature = "compress", feature = "util"))]
 #[cfg(all(feature = "compress", feature = "util"))]
-use sevenz_rust2::encoder_options::*;
+use async_sevenz::encoder_options::*;
 #[cfg(all(feature = "compress", feature = "util"))]
-use sevenz_rust2::*;
+use async_sevenz::*;
 #[cfg(all(feature = "compress", feature = "util"))]
 use std::hash::{Hash, Hasher};
 #[cfg(all(feature = "compress", feature = "util"))]

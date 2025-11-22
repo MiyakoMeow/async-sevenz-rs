@@ -1,7 +1,7 @@
 use std::{collections::HashMap, env::temp_dir, time::Instant};
 
+use async_sevenz::*;
 use rand::Rng;
-use sevenz_rust2::*;
 
 fn main() {
     let temp_dir = temp_dir();
@@ -31,7 +31,7 @@ fn main() {
     // start to compress
     #[cfg(feature = "aes256")]
     {
-        smol::block_on(sevenz_rust2::compress_to_path_encrypted(
+        smol::block_on(async_sevenz::compress_to_path_encrypted(
             &src,
             &dest,
             Password::new("sevenz-rust"),
@@ -40,7 +40,7 @@ fn main() {
     }
     #[cfg(not(feature = "aes256"))]
     {
-        smol::block_on(sevenz_rust2::compress_to_path(&src, &dest)).expect("compress ok");
+        smol::block_on(async_sevenz::compress_to_path(&src, &dest)).expect("compress ok");
     }
     println!("compress took {:?}/{:?}", time.elapsed(), dest);
     if src.exists() {

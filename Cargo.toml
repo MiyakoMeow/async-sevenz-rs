@@ -1,14 +1,14 @@
 [package]
-description = "A 7z decompressor/compressor written in pure Rust"
+description = "An async 7z decompressor/compressor written in pure Rust"
 edition = "2024"
-homepage = "https://github.com/hasenbanck/sevenz-rust2"
+homepage = "https://github.com/MiyakoMeow/async-sevenz-rs"
 keywords = ["7z", "7zip", "sevenz", "decompress"]
 license = "Apache-2.0"
-name = "sevenz-rust2"
+name = "async-sevenz"
 readme = "README.md"
-repository = "https://github.com/hasenbanck/sevenz-rust"
+repository = "https://github.com/MiyakoMeow/async-sevenz-rs"
 rust-version = "1.85"
-version = "0.19.3"
+version = "0.0.1"
 
 [lib]
 crate-type = ["cdylib", "rlib"]

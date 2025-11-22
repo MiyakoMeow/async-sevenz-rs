@@ -1,14 +1,14 @@
 use std::time::Instant;
 
 use async_fs as afs;
+use async_sevenz::default_entry_extract_fn;
 use futures::io::Cursor;
-use sevenz_rust2::default_entry_extract_fn;
 
 fn main() {
     let instant = Instant::now();
     smol::block_on(async {
         let data = afs::read("examples/data/sample.7z").await.unwrap();
-        sevenz_rust2::decompress_with_extract_fn_and_password(
+        async_sevenz::decompress_with_extract_fn_and_password(
             Cursor::new(data),
             "examples/data/sample",
             "pass".into(),

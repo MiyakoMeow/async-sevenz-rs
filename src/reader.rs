@@ -195,7 +195,7 @@ impl Archive {
     /// # Example
     ///
     /// ```no_run
-    /// use sevenz_rust2::*;
+    /// use async_sevenz::*;
     ///
     /// let password = Password::from("the password");
     /// let archive = smol::block_on(Archive::open_with_password("example.7z", &password)).unwrap();

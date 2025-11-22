@@ -1,9 +1,9 @@
-[![Crate](https://img.shields.io/crates/v/sevenz-rust2.svg)](https://crates.io/crates/sevenz-rust2)
-[![Documentation](https://docs.rs/sevenz-rust2/badge.svg)](https://docs.rs/sevenz-rust2)
+[![Crate](https://img.shields.io/crates/v/async-sevenz.svg)](https://crates.io/crates/async-sevenz)
+[![Documentation](https://docs.rs/async-sevenz/badge.svg)](https://docs.rs/async-sevenz)
 
-This project is a 7z compressor/decompressor written in pure Rust.
+This project is an async 7z compressor/decompressor written in pure Rust.
 
-This is a fork of the original, unmaintained sevenz-rust crate to continue the development and maintenance.
+This is a fork of [sevenz-rust2](https://github.com/hasenbanck/sevenz-rust2), then translated the api to async with [async-compression](https://crates.io/crates/async-compression) by AI.
 
 ## Supported Codecs & filters
 
@@ -44,7 +44,7 @@ sevenz-rust2 = { version = "0.19" }
 Decompress source file "data/sample.7z" to destination path "data/sample":
 
 ```rust
-sevenz_rust2::decompress_file("data/sample.7z", "data/sample").expect("complete");
+async_sevenz::decompress_file("data/sample.7z", "data/sample").expect("complete");
 ```
 
 #### Decompress an encrypted 7z file
@@ -52,7 +52,7 @@ sevenz_rust2::decompress_file("data/sample.7z", "data/sample").expect("complete"
 Use the helper function to encrypt and decompress source file "path/to/encrypted.7z" to destination path "data/sample":
 
 ```rust
-sevenz_rust2::decompress_file_with_password("path/to/encrypted.7z", "data/sample", "password".into()).expect("complete");
+async_sevenz::decompress_file_with_password("path/to/encrypted.7z", "data/sample", "password".into()).expect("complete");
 ```
 
 ## Compression
@@ -60,7 +60,7 @@ sevenz_rust2::decompress_file_with_password("path/to/encrypted.7z", "data/sample
 Use the helper function to create a 7z file with source path:
 
 ```rust
-sevenz_rust2::compress_to_path("examples/data/sample", "examples/data/sample.7z").expect("compress ok");
+async_sevenz::compress_to_path("examples/data/sample", "examples/data/sample.7z").expect("compress ok");
 ```
 
 ### Compress with AES encryption
@@ -68,7 +68,7 @@ sevenz_rust2::compress_to_path("examples/data/sample", "examples/data/sample.7z"
 Use the helper function to create a 7z file with source path and password:
 
 ```rust
-sevenz_rust2::compress_to_path_encrypted("examples/data/sample", "examples/data/sample.7z", "password".into()).expect("compress ok");
+async_sevenz::compress_to_path_encrypted("examples/data/sample", "examples/data/sample.7z", "password".into()).expect("compress ok");
 ```
 
 ### Advanced Usage
@@ -79,7 +79,7 @@ Solid archives can in theory provide better compression rates, but decompressing
 be decompressed.
 
 ```rust
-use sevenz_rust2::*;
+use async_sevenz::*;
 
 let mut writer = ArchiveWriter::create("dest.7z").expect("create writer ok");
 writer.push_source_path("path/to/compress", | _ | true).expect("pack ok");
@@ -91,7 +91,7 @@ writer.finish().expect("compress ok");
 With encryption and lzma2 options:
 
 ```rust
-use sevenz_rust2::*;
+use async_sevenz::*;
 
 let mut writer = ArchiveWriter::create("dest.7z").expect("create writer ok");
 writer.set_content_methods(vec![

@@ -1,11 +1,11 @@
 use async_fs as afs;
+use async_sevenz::Password;
 use futures::io::{AsyncReadExt, Cursor};
-use sevenz_rust2::Password;
 use std::path::PathBuf;
 
 fn main() {
     let total_size = {
-        let sz = smol::block_on(sevenz_rust2::ArchiveReader::open(
+        let sz = smol::block_on(async_sevenz::ArchiveReader::open(
             "examples/data/sample.7z",
             Password::from("pass"),
         ))
@@ -22,7 +22,7 @@ fn main() {
 
     smol::block_on(async {
         let data = afs::read("examples/data/sample.7z").await.unwrap();
-        sevenz_rust2::decompress_with_extract_fn_and_password(
+        async_sevenz::decompress_with_extract_fn_and_password(
             Cursor::new(data),
             &dest,
             Password::from("pass"),

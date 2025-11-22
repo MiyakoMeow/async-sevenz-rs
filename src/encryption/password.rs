@@ -6,7 +6,7 @@
 /// You can convert strings easily into password using the Into/From traits:
 ///
 /// ```rust
-/// use sevenz_rust2::Password;
+/// use async_sevenz::Password;
 ///
 /// let password: Password = "a password string".into();
 /// ```

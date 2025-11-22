@@ -1,7 +1,7 @@
 use async_fs as afs;
 use std::path::PathBuf;
 
-use sevenz_rust2::{Archive, BlockDecoder, Password};
+use async_sevenz::{Archive, BlockDecoder, Password};
 
 fn main() {
     let password = Password::empty();
@@ -32,7 +32,7 @@ fn main() {
             if entry.name() == my_file_name {
                 let dest = dest.join(entry.name());
                 Box::pin(async move {
-                    sevenz_rust2::default_entry_extract_fn(entry, reader, &dest).await?;
+                    async_sevenz::default_entry_extract_fn(entry, reader, &dest).await?;
                     Ok(true)
                 })
             } else {

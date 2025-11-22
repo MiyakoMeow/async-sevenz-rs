@@ -3,7 +3,7 @@
 fn test_decompress_file_with_password() {
     use std::{fs::read_to_string, path::PathBuf};
 
-    use sevenz_rust2::decompress_file_with_password;
+    use async_sevenz::decompress_file_with_password;
     use smol;
     use tempfile::tempdir;
 

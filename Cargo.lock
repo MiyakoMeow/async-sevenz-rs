@@ -143,6 +143,31 @@ dependencies = [
 ]
 
 [[package]]
+name = "async-sevenz"
+version = "0.0.1"
+dependencies = [
+ "aes",
+ "async-compression",
+ "async-fs",
+ "async-io",
+ "blocking",
+ "cbc",
+ "crc32fast",
+ "futures",
+ "futures-lite",
+ "getrandom",
+ "js-sys",
+ "lzma-rust2",
+ "nt-time",
+ "ppmd-rust",
+ "rand",
+ "sha2",
+ "smol",
+ "tempfile",
+ "wasm-bindgen",
+]
+
+[[package]]
 name = "async-signal"
 version = "0.2.13"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -929,31 +954,6 @@ dependencies = [
  "proc-macro2",
  "quote",
  "syn",
-]
-
-[[package]]
-name = "sevenz-rust2"
-version = "0.19.3"
-dependencies = [
- "aes",
- "async-compression",
- "async-fs",
- "async-io",
- "blocking",
- "cbc",
- "crc32fast",
- "futures",
- "futures-lite",
- "getrandom",
- "js-sys",
- "lzma-rust2",
- "nt-time",
- "ppmd-rust",
- "rand",
- "sha2",
- "smol",
- "tempfile",
- "wasm-bindgen",
 ]
 
 [[package]]

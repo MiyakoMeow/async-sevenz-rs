@@ -159,7 +159,7 @@ impl<W: AsyncWrite + AsyncSeek + Unpin> ArchiveWriter<W> {
     /// ```no_run
     /// use std::io::Cursor;
     /// use std::path::Path;
-    /// use sevenz_rust2::*;
+    /// use async_sevenz::*;
     /// let mut sz = smol::block_on(ArchiveWriter::create_in_memory()).expect("create writer ok");
     /// let src = Path::new("path/to/source.txt");
     /// let name = "source.txt".to_string();

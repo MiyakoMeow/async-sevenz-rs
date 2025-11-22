@@ -1,7 +1,7 @@
 use async_fs as afs;
 use std::{path::PathBuf, sync::Arc};
 
-use sevenz_rust2::{Archive, BlockDecoder, Password};
+use async_sevenz::{Archive, BlockDecoder, Password};
 
 // 0. The simplest way to use multi threading is to use simply the ArchiveReader.
 //    If the compression of the archive blocks supports multi threading, which is supported
@@ -46,7 +46,7 @@ fn main() {
             smol::block_on(block_decoder.for_each_entries(&mut |entry, reader| {
                 let dest = dest.join(entry.name());
                 Box::pin(async move {
-                    sevenz_rust2::default_entry_extract_fn(entry, reader, &dest).await?;
+                    async_sevenz::default_entry_extract_fn(entry, reader, &dest).await?;
                     Ok(true)
                 })
             }))
