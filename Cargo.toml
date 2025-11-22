@@ -2,7 +2,7 @@
 description = "An async 7z decompressor/compressor written in pure Rust"
 edition = "2024"
 homepage = "https://github.com/MiyakoMeow/async-sevenz-rs"
-keywords = ["7z", "7zip", "sevenz", "decompress"]
+keywords = ["async", "7z", "7zip", "sevenz", "decompress"]
 license = "Apache-2.0"
 name = "async-sevenz"
 readme = "README.md"
