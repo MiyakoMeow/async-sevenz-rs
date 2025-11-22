@@ -1,4 +1,5 @@
 [package]
+categories = ["asynchronous", "compression", "concurrency", "data-structures", "filesystem"]
 description = "An async 7z decompressor/compressor written in pure Rust"
 edition = "2024"
 homepage = "https://github.com/MiyakoMeow/async-sevenz-rs"
