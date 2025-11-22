@@ -50,6 +50,8 @@
 //! ## Decompress an encrypted 7z file
 //!
 //! ```rust
+//! # #[cfg(feature = "aes256")]
+//! # {
 //! use std::path::PathBuf;
 //!
 //! use tempfile::tempdir;
@@ -61,11 +63,14 @@
 //! let dest = tempdir().unwrap();
 //! smol::block_on(decompress_file_with_password(src, dest.path(), "sevenz-rust".into()))
 //!     .expect("complete");
+//! # }
 //! ```
 //!
 //! # Compression
 //!
 //! ```rust
+//! # #[cfg(feature = "compress")]
+//! # {
 //! use std::path::PathBuf;
 //!
 //! use tempfile::tempdir;
@@ -76,11 +81,14 @@
 //! let dest_dir = tempdir().unwrap();
 //! let dest = dest_dir.path().join("sample.7z");
 //! smol::block_on(compress_to_path(src, &dest)).expect("compress ok");
+//! # }
 //! ```
 //!
 //! ## Compress with AES encryption
 //!
 //! ```rust
+//! # #[cfg(all(feature = "compress", feature = "aes256"))]
+//! # {
 //! use std::path::PathBuf;
 //!
 //! use tempfile::tempdir;
@@ -92,11 +100,14 @@
 //! let dest = dest_dir.path().join("sample_encrypted.7z");
 //! smol::block_on(compress_to_path_encrypted(src, &dest, "sevenz-rust".into()))
 //!     .expect("compress ok");
+//! # }
 //! ```
 //!
 //! ## Solid compression
 //!
 //! ```rust
+//! # #[cfg(feature = "compress")]
+//! # {
 //! use async_sevenz::ArchiveWriter;
 //!
 //! smol::block_on(async {
@@ -109,11 +120,14 @@
 //!         .expect("pack ok");
 //!     writer.finish().await.expect("compress ok");
 //! });
+//! # }
 //! ```
 //!
 //! ## Configure the compression methods
 //!
 //! ```rust
+//! # #[cfg(feature = "compress")]
+//! # {
 //! use async_sevenz::{ArchiveWriter, encoder_options};
 //!
 //! smol::block_on(async {
@@ -130,6 +144,7 @@
 //!         .expect("pack ok");
 //!     writer.finish().await.expect("compress ok");
 //! });
+//! # }
 //! ```
 #![cfg_attr(docsrs, feature(doc_cfg))]
 #![warn(missing_docs)]
@@ -156,7 +171,6 @@ mod codec;
 pub(crate) mod decoder;
 
 mod time;
-#[cfg(feature = "util")]
 mod util;
 
 use std::ops::{Deref, DerefMut};
@@ -167,11 +181,11 @@ pub use encryption::Password;
 pub use error::Error;
 pub use reader::{ArchiveReader, BlockDecoder};
 pub use time::NtTime;
-#[cfg(all(feature = "compress", feature = "util", not(target_arch = "wasm32")))]
+#[cfg(all(feature = "compress", not(target_arch = "wasm32")))]
 pub use util::compress::*;
-#[cfg(all(feature = "util", not(target_arch = "wasm32")))]
+#[cfg(not(target_arch = "wasm32"))]
 pub use util::decompress::*;
-#[cfg(all(feature = "util", target_arch = "wasm32"))]
+#[cfg(target_arch = "wasm32")]
 pub use util::wasm::*;
 #[cfg(feature = "compress")]
 pub use writer::*;

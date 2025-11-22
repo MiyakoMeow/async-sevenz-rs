@@ -1,5 +1,5 @@
 mod counting_writer;
-#[cfg(all(feature = "util", not(target_arch = "wasm32")))]
+#[cfg(not(target_arch = "wasm32"))]
 mod lazy_file_reader;
 mod pack_info;
 mod seq_reader;
@@ -14,7 +14,7 @@ use std::{cell::Cell, rc::Rc, sync::Arc};
 pub(crate) use counting_writer::CountingWriter;
 use crc32fast::Hasher;
 
-#[cfg(all(feature = "util", not(target_arch = "wasm32")))]
+#[cfg(not(target_arch = "wasm32"))]
 pub(crate) use self::lazy_file_reader::LazyFileReader;
 pub(crate) use self::seq_reader::SeqReader;
 pub use self::source_reader::SourceReader;
@@ -108,7 +108,7 @@ pub struct ArchiveWriter<W: AsyncWrite + AsyncSeek + Unpin> {
     encrypt_header: bool,
 }
 
-#[cfg(all(feature = "util", not(target_arch = "wasm32")))]
+#[cfg(not(target_arch = "wasm32"))]
 impl ArchiveWriter<futures::io::Cursor<Vec<u8>>> {
     /// 创建一个基于内存缓冲的 7z 写入器。
     ///
