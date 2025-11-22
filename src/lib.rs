@@ -31,6 +31,106 @@
 //! | BCJ IA64      | ✓             | ✓           |
 //! | BCJ2          | ✓             |             |
 //! | DELTA         | ✓             | ✓           |
+//!
+//! # Usage
+//!
+//! ```rust
+//! use std::path::PathBuf;
+//!
+//! use tempfile::tempdir;
+//!
+//! use async_sevenz::decompress_file;
+//!
+//! let mut src = PathBuf::new();
+//! src.push("examples/data/sample.7z");
+//! let dest = tempdir().unwrap();
+//! smol::block_on(decompress_file(src, dest.path())).expect("complete");
+//! ```
+//!
+//! ## Decompress an encrypted 7z file
+//!
+//! ```rust
+//! use std::path::PathBuf;
+//!
+//! use tempfile::tempdir;
+//!
+//! use async_sevenz::decompress_file_with_password;
+//!
+//! let mut src = PathBuf::new();
+//! src.push("tests/resources/encrypted.7z");
+//! let dest = tempdir().unwrap();
+//! smol::block_on(decompress_file_with_password(src, dest.path(), "sevenz-rust".into()))
+//!     .expect("complete");
+//! ```
+//!
+//! # Compression
+//!
+//! ```rust
+//! use std::path::PathBuf;
+//!
+//! use tempfile::tempdir;
+//!
+//! use async_sevenz::compress_to_path;
+//!
+//! let src = PathBuf::from("examples/data/sample");
+//! let dest_dir = tempdir().unwrap();
+//! let dest = dest_dir.path().join("sample.7z");
+//! smol::block_on(compress_to_path(src, &dest)).expect("compress ok");
+//! ```
+//!
+//! ## Compress with AES encryption
+//!
+//! ```rust
+//! use std::path::PathBuf;
+//!
+//! use tempfile::tempdir;
+//!
+//! use async_sevenz::compress_to_path_encrypted;
+//!
+//! let src = PathBuf::from("examples/data/sample");
+//! let dest_dir = tempdir().unwrap();
+//! let dest = dest_dir.path().join("sample_encrypted.7z");
+//! smol::block_on(compress_to_path_encrypted(src, &dest, "sevenz-rust".into()))
+//!     .expect("compress ok");
+//! ```
+//!
+//! ## Solid compression
+//!
+//! ```rust
+//! use async_sevenz::ArchiveWriter;
+//!
+//! smol::block_on(async {
+//!     let mut writer = ArchiveWriter::create_in_memory()
+//!         .await
+//!         .expect("create writer ok");
+//!     writer
+//!         .push_source_path("examples/data/sample", |_| async { true })
+//!         .await
+//!         .expect("pack ok");
+//!     writer.finish().await.expect("compress ok");
+//! });
+//! ```
+//!
+//! ## Configure the compression methods
+//!
+//! ```rust
+//! use async_sevenz::{ArchiveWriter, encoder_options};
+//!
+//! smol::block_on(async {
+//!     let mut writer = ArchiveWriter::create_in_memory()
+//!         .await
+//!         .expect("create writer ok");
+//!     writer.set_content_methods(vec![
+//!         encoder_options::AesEncoderOptions::new("sevenz-rust".into()).into(),
+//!         encoder_options::Lzma2Options::from_level(9).into(),
+//!     ]);
+//!     writer
+//!         .push_source_path("examples/data/sample", |_| async { true })
+//!         .await
+//!         .expect("pack ok");
+//!     writer.finish().await.expect("compress ok");
+//! });
+//! ```
 #![cfg_attr(docsrs, feature(doc_cfg))]
 #![warn(missing_docs)]
 
