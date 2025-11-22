@@ -35,6 +35,10 @@ jobs:
         with:
           toolchain: ${{matrix.toolchain}}
           target: ${{matrix.target}}
+      - name: Cache cargo build
+        uses: Swatinem/rust-cache@v2
+        with:
+          cache-on-failure: true
       - uses: actions/checkout@v5
       - name: Build no default features
         run: cargo build --no-default-features --release
@@ -70,6 +74,10 @@ jobs:
         with:
           toolchain: ${{matrix.toolchain}}
           target: ${{matrix.target}}
+      - name: Cache cargo build
+        uses: Swatinem/rust-cache@v2
+        with:
+          cache-on-failure: true
       - uses: actions/checkout@v5
       - name: Build default features
         run: cargo build --target wasm32-unknown-unknown --release --no-default-features
@@ -87,6 +95,10 @@ jobs:
         with:
           toolchain: stable
           components: rustfmt
+      - name: Cache cargo build
+        uses: Swatinem/rust-cache@v2
+        with:
+          cache-on-failure: true
       - name: Cache build artifacts
         uses: Swatinem/rust-cache@v2.8.1
       - name: Check code formatted
@@ -104,7 +116,9 @@ jobs:
           toolchain: stable
           components: clippy
       - name: Cache build artifacts
-        uses: Swatinem/rust-cache@v2.8.1
+        uses: Swatinem/rust-cache@v2
+        with:
+          cache-on-failure: true
 
       - name: Check no lint warnings
         run: cargo clippy --workspace -- -D warnings
@@ -124,7 +138,9 @@ jobs:
           toolchain: stable
           components: clippy
       - name: Cache build artifacts
-        uses: Swatinem/rust-cache@v2.8.1
+        uses: Swatinem/rust-cache@v2
+        with:
+          cache-on-failure: true
 
       - name: Create solid archive
         shell: bash
