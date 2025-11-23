@@ -160,20 +160,21 @@ impl<W: AsyncWrite + AsyncSeek + Unpin> ArchiveWriter<W> {
     /// use std::io::Cursor;
     /// use std::path::Path;
     /// use async_sevenz::*;
-    /// let mut sz = tokio::runtime::Runtime::new().unwrap().block_on(ArchiveWriter::create_in_memory()).expect("create writer ok");
-    /// let src = Path::new("path/to/source.txt");
-    /// let name = "source.txt".to_string();
-    /// let entry = tokio::runtime::Runtime::new().unwrap().block_on(async {
-    ///     sz
+    /// #[tokio::main]
+    /// async fn main() {
+    ///     let mut sz = ArchiveWriter::create_in_memory().await.expect("create writer ok");
+    ///     let src = Path::new("path/to/source.txt");
+    ///     let name = "source.txt".to_string();
+    ///     let entry = sz
     ///         .push_archive_entry(
     ///             ArchiveEntry::from_path(&src, name).await,
     ///             Some(futures::io::Cursor::new(&b"example"[..])),
     ///         )
     ///         .await
-    ///         .expect("ok")
-    /// });
-    /// let compressed_size = entry.compressed_size;
-    /// let _cursor = tokio::runtime::Runtime::new().unwrap().block_on(sz.finish()).expect("done");
+    ///         .expect("ok");
+    ///     let compressed_size = entry.compressed_size;
+    ///     let _cursor = sz.finish().await.expect("done");
+    /// }
     /// ```
     pub async fn push_archive_entry<R: AsyncRead + Unpin>(
         &mut self,

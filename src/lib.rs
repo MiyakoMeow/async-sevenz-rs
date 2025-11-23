@@ -40,10 +40,13 @@
 //!
 //! use async_sevenz::decompress_file;
 //!
-//! let mut src = PathBuf::new();
-//! src.push("examples/data/sample.7z");
-//! let dest = tempdir().unwrap();
-//! tokio::runtime::Runtime::new().unwrap().block_on(decompress_file(src, dest.path())).expect("complete");
+//! #[tokio::main]
+//! async fn main() {
+//!     let mut src = PathBuf::new();
+//!     src.push("examples/data/sample.7z");
+//!     let dest = tempdir().unwrap();
+//!     decompress_file(src, dest.path()).await.expect("complete");
+//! }
 //! ```
 //!
 //! ## Decompress an encrypted 7z file
@@ -57,11 +60,14 @@
 //!
 //! use async_sevenz::decompress_file_with_password;
 //!
-//! let mut src = PathBuf::new();
-//! src.push("tests/resources/encrypted.7z");
-//! let dest = tempdir().unwrap();
-//! tokio::runtime::Runtime::new().unwrap().block_on(decompress_file_with_password(src, dest.path(), "sevenz-rust".into()))
-//!     .expect("complete");
+//! #[tokio::main]
+//! async fn main() {
+//!     let mut src = PathBuf::new();
+//!     src.push("tests/resources/encrypted.7z");
+//!     let dest = tempdir().unwrap();
+//!     decompress_file_with_password(src, dest.path(), "sevenz-rust".into()).await
+//!         .expect("complete");
+//! }
 //! # }
 //! ```
 //!
@@ -76,10 +82,13 @@
 //!
 //! use async_sevenz::compress_to_path;
 //!
-//! let src = PathBuf::from("examples/data/sample");
-//! let dest_dir = tempdir().unwrap();
-//! let dest = dest_dir.path().join("sample.7z");
-//! tokio::runtime::Runtime::new().unwrap().block_on(compress_to_path(src, &dest)).expect("compress ok");
+//! #[tokio::main]
+//! async fn main() {
+//!     let src = PathBuf::from("examples/data/sample");
+//!     let dest_dir = tempdir().unwrap();
+//!     let dest = dest_dir.path().join("sample.7z");
+//!     compress_to_path(src, &dest).await.expect("compress ok");
+//! }
 //! # }
 //! ```
 //!
@@ -94,11 +103,14 @@
 //!
 //! use async_sevenz::compress_to_path_encrypted;
 //!
-//! let src = PathBuf::from("examples/data/sample");
-//! let dest_dir = tempdir().unwrap();
-//! let dest = dest_dir.path().join("sample_encrypted.7z");
-//! tokio::runtime::Runtime::new().unwrap().block_on(compress_to_path_encrypted(src, &dest, "sevenz-rust".into()))
-//!     .expect("compress ok");
+//! #[tokio::main]
+//! async fn main() {
+//!     let src = PathBuf::from("examples/data/sample");
+//!     let dest_dir = tempdir().unwrap();
+//!     let dest = dest_dir.path().join("sample_encrypted.7z");
+//!     compress_to_path_encrypted(src, &dest, "sevenz-rust".into()).await
+//!         .expect("compress ok");
+//! }
 //! # }
 //! ```
 //!
@@ -109,7 +121,8 @@
 //! # {
 //! use async_sevenz::ArchiveWriter;
 //!
-//! tokio::runtime::Runtime::new().unwrap().block_on(async {
+//! #[tokio::main]
+//! async fn main() {
 //!     let mut writer = ArchiveWriter::create_in_memory()
 //!         .await
 //!         .expect("create writer ok");
@@ -118,7 +131,7 @@
 //!         .await
 //!         .expect("pack ok");
 //!     writer.finish().await.expect("compress ok");
-//! });
+//! }
 //! # }
 //! ```
 //!
@@ -129,7 +142,8 @@
 //! # {
 //! use async_sevenz::{ArchiveWriter, encoder_options};
 //!
-//! tokio::runtime::Runtime::new().unwrap().block_on(async {
+//! #[tokio::main]
+//! async fn main() {
 //!     let mut writer = ArchiveWriter::create_in_memory()
 //!         .await
 //!         .expect("create writer ok");
@@ -142,7 +156,7 @@
 //!         .await
 //!         .expect("pack ok");
 //!     writer.finish().await.expect("compress ok");
-//! });
+//! }
 //! # }
 //! ```
 #![cfg_attr(docsrs, feature(doc_cfg))]

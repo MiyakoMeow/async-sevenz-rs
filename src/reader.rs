@@ -195,11 +195,14 @@ impl Archive {
     /// ```no_run
     /// use async_sevenz::*;
     ///
-    /// let password = Password::from("the password");
-    /// let archive = tokio::runtime::Runtime::new().unwrap().block_on(Archive::open_with_password("example.7z", &password)).unwrap();
+    /// #[tokio::main]
+    /// async fn main() {
+    ///     let password = Password::from("the password");
+    ///     let archive = Archive::open_with_password("example.7z", &password).await.unwrap();
     ///
-    /// for entry in &archive.files {
-    ///     println!("{}", entry.name());
+    ///     for entry in &archive.files {
+    ///         println!("{}", entry.name());
+    ///     }
     /// }
     /// ```
     pub(crate) async fn read<R: AsyncRead + AsyncSeek + Unpin + Send>(
