@@ -1,13 +1,16 @@
-use futures_lite::io::Cursor;
 #[cfg(feature = "compress")]
 use std::collections::VecDeque;
+use std::pin::Pin;
+use std::task::{Context, Poll};
 
 use crate::Error;
 use async_compression::futures::bufread::Lz4Decoder as AsyncLz4Decoder;
 #[cfg(feature = "compress")]
 use async_compression::futures::write::Lz4Encoder as AsyncLz4Encoder;
 use futures_lite::io::BufReader as AsyncBufReader;
-use futures_lite::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
+use futures_lite::io::{AsyncRead, AsyncReadExt, Cursor};
+#[cfg(feature = "compress")]
+use futures_lite::io::{AsyncWrite, AsyncWriteExt};
 
 /// Magic bytes of a skippable frame as used in LZ4 by zstdmt.
 const SKIPPABLE_FRAME_MAGIC: u32 = 0x184D2A50;
@@ -52,16 +55,16 @@ impl<R: AsyncRead + Unpin> Lz4Decoder<R> {
     }
 }
 
-impl<R: AsyncRead + Unpin> futures_lite::io::AsyncRead for Lz4Decoder<R> {
+impl<R: AsyncRead + Unpin> AsyncRead for Lz4Decoder<R> {
     fn poll_read(
-        mut self: std::pin::Pin<&mut Self>,
-        cx: &mut std::task::Context<'_>,
+        mut self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
         buf: &mut [u8],
-    ) -> std::task::Poll<std::io::Result<usize>> {
+    ) -> Poll<std::io::Result<usize>> {
         if let Some(inner) = &mut self.inner {
-            let mut pin_inner = std::pin::Pin::new(inner);
+            let mut pin_inner = Pin::new(inner);
             match pin_inner.as_mut().poll_read(cx, buf) {
-                std::task::Poll::Ready(Ok(0)) => {
+                Poll::Ready(Ok(0)) => {
                     let inner_reader: &mut InnerReader<R> = {
                         let bufreader: &mut AsyncBufReader<InnerReader<R>> =
                             pin_inner.get_mut().get_mut();
@@ -71,18 +74,18 @@ impl<R: AsyncRead + Unpin> futures_lite::io::AsyncRead for Lz4Decoder<R> {
                         let reader = std::mem::replace(inner_reader, InnerReader::empty());
                         let bufread: AsyncBufReader<InnerReader<R>> = AsyncBufReader::new(reader);
                         let mut deencoder = AsyncLz4Decoder::new(bufread);
-                        let poll = std::pin::Pin::new(&mut deencoder).poll_read(cx, buf);
+                        let poll = Pin::new(&mut deencoder).poll_read(cx, buf);
                         self.inner = Some(deencoder);
                         poll
                     } else {
                         self.inner = None;
-                        std::task::Poll::Ready(Ok(0))
+                        Poll::Ready(Ok(0))
                     }
                 }
                 other => other,
             }
         } else {
-            std::task::Poll::Ready(Ok(0))
+            Poll::Ready(Ok(0))
         }
     }
 }
@@ -164,31 +167,31 @@ impl<R: AsyncRead + Unpin> InnerReader<R> {
     }
 }
 
-impl<R: AsyncRead + Unpin> futures_lite::io::AsyncRead for InnerReader<R> {
+impl<R: AsyncRead + Unpin> AsyncRead for InnerReader<R> {
     fn poll_read(
-        mut self: std::pin::Pin<&mut Self>,
-        cx: &mut std::task::Context<'_>,
+        mut self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
         buf: &mut [u8],
-    ) -> std::task::Poll<std::io::Result<usize>> {
+    ) -> Poll<std::io::Result<usize>> {
         match &mut *self {
-            InnerReader::Empty => std::task::Poll::Ready(Ok(0)),
+            InnerReader::Empty => Poll::Ready(Ok(0)),
             InnerReader::Standard {
                 reader,
                 header_buffer,
                 header_finished,
             } => {
                 if !*header_finished {
-                    let poll = std::pin::Pin::new(header_buffer).poll_read(cx, buf);
-                    if let std::task::Poll::Ready(Ok(bytes_read)) = poll {
+                    let poll = Pin::new(header_buffer).poll_read(cx, buf);
+                    if let Poll::Ready(Ok(bytes_read)) = poll {
                         if bytes_read > 0 {
-                            return std::task::Poll::Ready(Ok(bytes_read));
+                            return Poll::Ready(Ok(bytes_read));
                         }
                         *header_finished = true;
                     } else {
                         return poll;
                     }
                 }
-                std::pin::Pin::new(reader).poll_read(cx, buf)
+                Pin::new(reader).poll_read(cx, buf)
             }
             InnerReader::Skippable {
                 reader,
@@ -196,20 +199,20 @@ impl<R: AsyncRead + Unpin> futures_lite::io::AsyncRead for InnerReader<R> {
                 frame_finished,
             } => {
                 if *frame_finished || *remaining_in_frame == 0 {
-                    return std::task::Poll::Ready(Ok(0));
+                    return Poll::Ready(Ok(0));
                 }
                 let bytes_to_read = std::cmp::min(*remaining_in_frame as usize, buf.len());
-                let poll = std::pin::Pin::new(reader).poll_read(cx, &mut buf[..bytes_to_read]);
-                if let std::task::Poll::Ready(Ok(bytes_read)) = poll {
+                let poll = Pin::new(reader).poll_read(cx, &mut buf[..bytes_to_read]);
+                if let Poll::Ready(Ok(bytes_read)) = poll {
                     if bytes_read == 0 {
                         *frame_finished = true;
-                        return std::task::Poll::Ready(Ok(0));
+                        return Poll::Ready(Ok(0));
                     }
                     *remaining_in_frame -= bytes_read as u32;
                     if *remaining_in_frame == 0 {
                         *frame_finished = true;
                     }
-                    std::task::Poll::Ready(Ok(bytes_read))
+                    Poll::Ready(Ok(bytes_read))
                 } else {
                     poll
                 }
@@ -230,7 +233,7 @@ enum InnerWriter<W: AsyncWrite + Unpin> {
     Standard(AsyncLz4Encoder<W>),
     Framed {
         writer: W,
-        compressor: Option<AsyncLz4Encoder<futures_lite::io::Cursor<Vec<u8>>>>,
+        compressor: Option<AsyncLz4Encoder<Cursor<Vec<u8>>>>,
         frame_size: usize,
         uncompressed_bytes_in_frame: usize,
         pending_frames: VecDeque<Vec<u8>>,
@@ -245,7 +248,7 @@ impl<W: AsyncWrite + Unpin> Lz4Encoder<W> {
             let encoder = AsyncLz4Encoder::new(writer);
             InnerWriter::Standard(encoder)
         } else {
-            let cursor = futures_lite::io::Cursor::new(Vec::with_capacity(frame_size));
+            let cursor = Cursor::new(Vec::with_capacity(frame_size));
             let compressor = Some(AsyncLz4Encoder::new(cursor));
             InnerWriter::Framed {
                 writer,
@@ -305,15 +308,15 @@ impl<W: AsyncWrite + Unpin> Lz4Encoder<W> {
 }
 
 #[cfg(feature = "compress")]
-impl<W: AsyncWrite + Unpin> futures_lite::io::AsyncWrite for Lz4Encoder<W> {
+impl<W: AsyncWrite + Unpin> AsyncWrite for Lz4Encoder<W> {
     fn poll_write(
-        mut self: std::pin::Pin<&mut Self>,
-        cx: &mut std::task::Context<'_>,
+        mut self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
         buf: &[u8],
-    ) -> std::task::Poll<std::io::Result<usize>> {
+    ) -> Poll<std::io::Result<usize>> {
         match &mut self.inner {
             InnerWriter::Standard(encoder) => {
-                let mut pin = std::pin::Pin::new(encoder);
+                let mut pin = Pin::new(encoder);
                 pin.as_mut().poll_write(cx, buf)
             }
             InnerWriter::Framed {
@@ -326,12 +329,10 @@ impl<W: AsyncWrite + Unpin> futures_lite::io::AsyncWrite for Lz4Encoder<W> {
             } => {
                 if let Some(front) = pending_frames.front_mut() {
                     if *pending_offset < front.len() {
-                        match std::pin::Pin::new(&mut *writer)
-                            .poll_write(cx, &front[*pending_offset..])
-                        {
-                            std::task::Poll::Ready(Ok(w)) => {
+                        match Pin::new(&mut *writer).poll_write(cx, &front[*pending_offset..]) {
+                            Poll::Ready(Ok(w)) => {
                                 if w == 0 {
-                                    return std::task::Poll::Ready(Ok(0));
+                                    return Poll::Ready(Ok(0));
                                 }
                                 *pending_offset += w;
                                 if *pending_offset >= front.len() {
@@ -339,86 +340,81 @@ impl<W: AsyncWrite + Unpin> futures_lite::io::AsyncWrite for Lz4Encoder<W> {
                                     *pending_offset = 0;
                                 }
                             }
-                            std::task::Poll::Ready(Err(e)) => {
-                                return std::task::Poll::Ready(Err(e));
+                            Poll::Ready(Err(e)) => {
+                                return Poll::Ready(Err(e));
                             }
-                            std::task::Poll::Pending => {}
+                            Poll::Pending => {}
                         }
                     }
                 }
 
                 if buf.is_empty() {
-                    return std::task::Poll::Ready(Ok(0));
+                    return Poll::Ready(Ok(0));
                 }
 
                 let cap = *frame_size - *uncompressed_bytes_in_frame;
                 let to_write = std::cmp::min(buf.len(), cap);
                 if to_write == 0 {
                     let mut comp = compressor.take().expect("no compressor set");
-                    let mut pin = std::pin::Pin::new(&mut comp);
+                    let mut pin = Pin::new(&mut comp);
                     match pin.as_mut().poll_close(cx) {
-                        std::task::Poll::Ready(Ok(())) => {
+                        Poll::Ready(Ok(())) => {
                             let cursor = comp.into_inner();
                             let data = cursor.into_inner();
                             let frame = Self::build_frame_bytes(&data);
                             if !frame.is_empty() {
                                 pending_frames.push_back(frame);
                             }
-                            let new_cursor =
-                                futures_lite::io::Cursor::new(Vec::with_capacity(*frame_size));
+                            let new_cursor = Cursor::new(Vec::with_capacity(*frame_size));
                             *compressor = Some(AsyncLz4Encoder::new(new_cursor));
                             *uncompressed_bytes_in_frame = 0;
-                            std::task::Poll::Pending
+                            Poll::Pending
                         }
-                        std::task::Poll::Ready(Err(e)) => std::task::Poll::Ready(Err(e)),
-                        std::task::Poll::Pending => std::task::Poll::Pending,
+                        Poll::Ready(Err(e)) => Poll::Ready(Err(e)),
+                        Poll::Pending => Poll::Pending,
                     }
                 } else {
                     let comp = compressor.as_mut().expect("no compressor set");
-                    let mut pin = std::pin::Pin::new(comp);
+                    let mut pin = Pin::new(comp);
                     match pin.as_mut().poll_write(cx, &buf[..to_write]) {
-                        std::task::Poll::Ready(Ok(n)) => {
+                        Poll::Ready(Ok(n)) => {
                             *uncompressed_bytes_in_frame += n;
                             if *uncompressed_bytes_in_frame >= *frame_size {
                                 let mut comp2 = compressor.take().expect("no compressor set");
-                                let mut pin2 = std::pin::Pin::new(&mut comp2);
+                                let mut pin2 = Pin::new(&mut comp2);
                                 match pin2.as_mut().poll_close(cx) {
-                                    std::task::Poll::Ready(Ok(())) => {
+                                    Poll::Ready(Ok(())) => {
                                         let cursor = comp2.into_inner();
                                         let data = cursor.into_inner();
                                         let frame = Self::build_frame_bytes(&data);
                                         if !frame.is_empty() {
                                             pending_frames.push_back(frame);
                                         }
-                                        let new_cursor = futures_lite::io::Cursor::new(
-                                            Vec::with_capacity(*frame_size),
-                                        );
+                                        let new_cursor =
+                                            Cursor::new(Vec::with_capacity(*frame_size));
                                         *compressor = Some(AsyncLz4Encoder::new(new_cursor));
                                         *uncompressed_bytes_in_frame = 0;
                                     }
-                                    std::task::Poll::Ready(Err(e)) => {
-                                        return std::task::Poll::Ready(Err(e));
+                                    Poll::Ready(Err(e)) => {
+                                        return Poll::Ready(Err(e));
                                     }
-                                    std::task::Poll::Pending => return std::task::Poll::Pending,
+                                    Poll::Pending => return Poll::Pending,
                                 }
                             }
-                            std::task::Poll::Ready(Ok(n))
+                            Poll::Ready(Ok(n))
                         }
-                        std::task::Poll::Ready(Err(e)) => std::task::Poll::Ready(Err(e)),
-                        std::task::Poll::Pending => std::task::Poll::Pending,
+                        Poll::Ready(Err(e)) => Poll::Ready(Err(e)),
+                        Poll::Pending => Poll::Pending,
                     }
                 }
             }
         }
     }
 
-    fn poll_flush(
-        mut self: std::pin::Pin<&mut Self>,
-        cx: &mut std::task::Context<'_>,
-    ) -> std::task::Poll<std::io::Result<()>> {
+    fn poll_flush(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<std::io::Result<()>> {
         match &mut self.inner {
             InnerWriter::Standard(encoder) => {
-                let mut pin = std::pin::Pin::new(encoder);
+                let mut pin = Pin::new(encoder);
                 pin.as_mut().poll_flush(cx)
             }
             InnerWriter::Framed {
@@ -431,22 +427,21 @@ impl<W: AsyncWrite + Unpin> futures_lite::io::AsyncWrite for Lz4Encoder<W> {
             } => {
                 if *uncompressed_bytes_in_frame > 0 {
                     let mut comp = compressor.take().expect("no compressor set");
-                    let mut pin = std::pin::Pin::new(&mut comp);
+                    let mut pin = Pin::new(&mut comp);
                     match pin.as_mut().poll_close(cx) {
-                        std::task::Poll::Ready(Ok(())) => {
+                        Poll::Ready(Ok(())) => {
                             let cursor = comp.into_inner();
                             let data = cursor.into_inner();
                             let frame = Self::build_frame_bytes(&data);
                             if !frame.is_empty() {
                                 pending_frames.push_back(frame);
                             }
-                            let new_cursor =
-                                futures_lite::io::Cursor::new(Vec::with_capacity(*frame_size));
+                            let new_cursor = Cursor::new(Vec::with_capacity(*frame_size));
                             *compressor = Some(AsyncLz4Encoder::new(new_cursor));
                             *uncompressed_bytes_in_frame = 0;
                         }
-                        std::task::Poll::Ready(Err(e)) => return std::task::Poll::Ready(Err(e)),
-                        std::task::Poll::Pending => return std::task::Poll::Pending,
+                        Poll::Ready(Err(e)) => return Poll::Ready(Err(e)),
+                        Poll::Pending => return Poll::Pending,
                     }
                 }
 
@@ -456,11 +451,10 @@ impl<W: AsyncWrite + Unpin> futures_lite::io::AsyncWrite for Lz4Encoder<W> {
                         *pending_offset = 0;
                         continue;
                     }
-                    match std::pin::Pin::new(&mut *writer).poll_write(cx, &front[*pending_offset..])
-                    {
-                        std::task::Poll::Ready(Ok(w)) => {
+                    match Pin::new(&mut *writer).poll_write(cx, &front[*pending_offset..]) {
+                        Poll::Ready(Ok(w)) => {
                             if w == 0 {
-                                return std::task::Poll::Pending;
+                                return Poll::Pending;
                             }
                             *pending_offset += w;
                             if *pending_offset >= front.len() {
@@ -468,24 +462,21 @@ impl<W: AsyncWrite + Unpin> futures_lite::io::AsyncWrite for Lz4Encoder<W> {
                                 *pending_offset = 0;
                             }
                         }
-                        std::task::Poll::Ready(Err(e)) => return std::task::Poll::Ready(Err(e)),
-                        std::task::Poll::Pending => return std::task::Poll::Pending,
+                        Poll::Ready(Err(e)) => return Poll::Ready(Err(e)),
+                        Poll::Pending => return Poll::Pending,
                     }
                 }
 
-                let mut pin = std::pin::Pin::new(&mut *writer);
+                let mut pin = Pin::new(&mut *writer);
                 pin.as_mut().poll_flush(cx)
             }
         }
     }
 
-    fn poll_close(
-        mut self: std::pin::Pin<&mut Self>,
-        cx: &mut std::task::Context<'_>,
-    ) -> std::task::Poll<std::io::Result<()>> {
+    fn poll_close(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<std::io::Result<()>> {
         match &mut self.inner {
             InnerWriter::Standard(encoder) => {
-                let mut pin = std::pin::Pin::new(encoder);
+                let mut pin = Pin::new(encoder);
                 pin.as_mut().poll_close(cx)
             }
             InnerWriter::Framed {
@@ -498,22 +489,21 @@ impl<W: AsyncWrite + Unpin> futures_lite::io::AsyncWrite for Lz4Encoder<W> {
             } => {
                 if *uncompressed_bytes_in_frame > 0 {
                     let mut comp = compressor.take().expect("no compressor set");
-                    let mut pin = std::pin::Pin::new(&mut comp);
+                    let mut pin = Pin::new(&mut comp);
                     match pin.as_mut().poll_close(cx) {
-                        std::task::Poll::Ready(Ok(())) => {
+                        Poll::Ready(Ok(())) => {
                             let cursor = comp.into_inner();
                             let data = cursor.into_inner();
                             let frame = Self::build_frame_bytes(&data);
                             if !frame.is_empty() {
                                 pending_frames.push_back(frame);
                             }
-                            let new_cursor =
-                                futures_lite::io::Cursor::new(Vec::with_capacity(*frame_size));
+                            let new_cursor = Cursor::new(Vec::with_capacity(*frame_size));
                             *compressor = Some(AsyncLz4Encoder::new(new_cursor));
                             *uncompressed_bytes_in_frame = 0;
                         }
-                        std::task::Poll::Ready(Err(e)) => return std::task::Poll::Ready(Err(e)),
-                        std::task::Poll::Pending => return std::task::Poll::Pending,
+                        Poll::Ready(Err(e)) => return Poll::Ready(Err(e)),
+                        Poll::Pending => return Poll::Pending,
                     }
                 }
 
@@ -523,11 +513,10 @@ impl<W: AsyncWrite + Unpin> futures_lite::io::AsyncWrite for Lz4Encoder<W> {
                         *pending_offset = 0;
                         continue;
                     }
-                    match std::pin::Pin::new(&mut *writer).poll_write(cx, &front[*pending_offset..])
-                    {
-                        std::task::Poll::Ready(Ok(w)) => {
+                    match Pin::new(&mut *writer).poll_write(cx, &front[*pending_offset..]) {
+                        Poll::Ready(Ok(w)) => {
                             if w == 0 {
-                                return std::task::Poll::Pending;
+                                return Poll::Pending;
                             }
                             *pending_offset += w;
                             if *pending_offset >= front.len() {
@@ -535,12 +524,12 @@ impl<W: AsyncWrite + Unpin> futures_lite::io::AsyncWrite for Lz4Encoder<W> {
                                 *pending_offset = 0;
                             }
                         }
-                        std::task::Poll::Ready(Err(e)) => return std::task::Poll::Ready(Err(e)),
-                        std::task::Poll::Pending => return std::task::Poll::Pending,
+                        Poll::Ready(Err(e)) => return Poll::Ready(Err(e)),
+                        Poll::Pending => return Poll::Pending,
                     }
                 }
 
-                let mut pin = std::pin::Pin::new(&mut *writer);
+                let mut pin = Pin::new(&mut *writer);
                 pin.as_mut().poll_close(cx)
             }
         }

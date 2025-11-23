@@ -4,7 +4,7 @@ use std::path::{Path, PathBuf};
 
 use async_fs as afs;
 use futures_lite::StreamExt;
-use futures_lite::io::{AsyncSeek, AsyncWrite};
+use futures_lite::io::{AsyncSeek, AsyncWrite, Cursor};
 
 #[cfg(feature = "aes256")]
 use crate::encoder_options::AesEncoderOptions;
@@ -74,7 +74,7 @@ pub async fn compress_to_path(src: impl AsRef<Path>, dest: impl AsRef<Path>) -> 
                 .map_err(|e| Error::io_msg(e, format!("Create dir failed:{:?}", dest.as_ref())))?;
         }
     }
-    let cursor = futures_lite::io::Cursor::new(Vec::<u8>::new());
+    let cursor = Cursor::new(Vec::<u8>::new());
     let cursor = compress(src, cursor).await?;
     let data = cursor.into_inner();
     afs::write(dest.as_ref(), data).await?;
@@ -102,7 +102,7 @@ pub async fn compress_to_path_encrypted(
                 .map_err(|e| Error::io_msg(e, format!("Create dir failed:{:?}", dest.as_ref())))?;
         }
     }
-    let cursor = futures_lite::io::Cursor::new(Vec::<u8>::new());
+    let cursor = Cursor::new(Vec::<u8>::new());
     let cursor = compress_encrypted(src, cursor, password).await?;
     let data = cursor.into_inner();
     afs::write(dest.as_ref(), data).await?;

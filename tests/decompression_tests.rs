@@ -1,4 +1,5 @@
 use futures_lite::StreamExt;
+use futures_lite::io::{AsyncReadExt, Cursor};
 use std::path::PathBuf;
 
 use async_sevenz::decompress_file;
@@ -255,14 +256,14 @@ async fn test_bcj2() {
         let data = async_fs::read("tests/resources/7za433_7zip_lzma2_bcj2.7z")
             .await
             .unwrap();
-        let mut cursor = futures_lite::io::Cursor::new(data);
+        let mut cursor = Cursor::new(data);
         let fd = BlockDecoder::new(1, i, &archive, &password, &mut cursor);
         println!("entry_count:{}", fd.entry_count());
         fd.for_each_entries(&mut |entry, reader| {
             println!("{}=>{:?}", entry.has_stream, entry.name());
             Box::pin(async move {
                 let mut buf = Vec::new();
-                futures_lite::io::AsyncReadExt::read_to_end(reader, &mut buf).await?;
+                AsyncReadExt::read_to_end(reader, &mut buf).await?;
                 Ok(true)
             })
         })

@@ -1,17 +1,18 @@
-use futures_lite::io::Cursor;
 #[cfg(feature = "compress")]
 use std::collections::VecDeque;
 #[cfg(feature = "compress")]
 use std::io;
+use std::pin::Pin;
+use std::task::{Context, Poll};
 
 use crate::Error;
 use async_compression::futures::bufread::BrotliDecoder as AsyncBrotliDecoder;
 #[cfg(feature = "compress")]
 use async_compression::futures::write::BrotliEncoder as AsyncBrotliEncoder;
-use futures_lite::io::AsyncRead;
 #[cfg(feature = "compress")]
 use futures_lite::io::AsyncWrite;
 use futures_lite::io::BufReader as AsyncBufReader;
+use futures_lite::io::{AsyncRead, AsyncReadExt, Cursor};
 
 /// Magic bytes of a skippable frame format as used in brotli by zstdmt.
 const SKIPPABLE_FRAME_MAGIC: u32 = 0x184D2A50;
@@ -30,10 +31,7 @@ pub(crate) struct BrotliDecoder<R: AsyncRead + Unpin> {
 impl<R: AsyncRead + Unpin> BrotliDecoder<R> {
     pub(crate) fn new(mut input: R, buffer_size: usize) -> Result<Self, Error> {
         let mut header = [0u8; 16];
-        let header_read = match async_io::block_on(futures_lite::io::AsyncReadExt::read(
-            &mut input,
-            &mut header,
-        )) {
+        let header_read = match async_io::block_on(AsyncReadExt::read(&mut input, &mut header)) {
             Ok(n) if n >= 4 => n,
             Ok(_) => return Err(Error::other("Input too short")),
             Err(e) => return Err(e.into()),
@@ -70,16 +68,16 @@ impl<R: AsyncRead + Unpin> BrotliDecoder<R> {
     }
 }
 
-impl<R: AsyncRead + Unpin> futures_lite::io::AsyncRead for BrotliDecoder<R> {
+impl<R: AsyncRead + Unpin> AsyncRead for BrotliDecoder<R> {
     fn poll_read(
-        mut self: std::pin::Pin<&mut Self>,
-        cx: &mut std::task::Context<'_>,
+        mut self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
         buf: &mut [u8],
-    ) -> std::task::Poll<std::io::Result<usize>> {
+    ) -> Poll<std::io::Result<usize>> {
         if let Some(inner) = &mut self.inner {
-            let mut pin_inner = std::pin::Pin::new(inner);
+            let mut pin_inner = Pin::new(inner);
             match pin_inner.as_mut().poll_read(cx, buf) {
-                std::task::Poll::Ready(Ok(0)) => {
+                Poll::Ready(Ok(0)) => {
                     let inner_reader: &mut InnerReader<R> = {
                         let bufreader: &mut AsyncBufReader<InnerReader<R>> =
                             pin_inner.get_mut().get_mut();
@@ -90,18 +88,18 @@ impl<R: AsyncRead + Unpin> futures_lite::io::AsyncRead for BrotliDecoder<R> {
                         let bufread: AsyncBufReader<InnerReader<R>> =
                             AsyncBufReader::with_capacity(self.buffer_size, reader);
                         let mut decompressor = AsyncBrotliDecoder::new(bufread);
-                        let poll = std::pin::Pin::new(&mut decompressor).poll_read(cx, buf);
+                        let poll = Pin::new(&mut decompressor).poll_read(cx, buf);
                         self.inner = Some(decompressor);
                         poll
                     } else {
                         self.inner = None;
-                        std::task::Poll::Ready(Ok(0))
+                        Poll::Ready(Ok(0))
                     }
                 }
                 other => other,
             }
         } else {
-            std::task::Poll::Ready(Ok(0))
+            Poll::Ready(Ok(0))
         }
     }
 }
@@ -154,40 +152,30 @@ impl<R: AsyncRead + Unpin> InnerReader<R> {
                     return Ok(false);
                 }
                 let mut buf4 = [0u8; 4];
-                match async_io::block_on(futures_lite::io::AsyncReadExt::read_exact(
-                    reader, &mut buf4,
-                )) {
+                match async_io::block_on(AsyncReadExt::read_exact(reader, &mut buf4)) {
                     Ok(_) => {
                         let magic = u32::from_le_bytes(buf4);
                         if magic != SKIPPABLE_FRAME_MAGIC {
                             return Ok(false);
                         }
 
-                        async_io::block_on(futures_lite::io::AsyncReadExt::read_exact(
-                            reader, &mut buf4,
-                        ))?;
+                        async_io::block_on(AsyncReadExt::read_exact(reader, &mut buf4))?;
                         let skippable_size = u32::from_le_bytes(buf4);
                         if skippable_size != 8 {
                             return Ok(false);
                         }
 
-                        async_io::block_on(futures_lite::io::AsyncReadExt::read_exact(
-                            reader, &mut buf4,
-                        ))?;
+                        async_io::block_on(AsyncReadExt::read_exact(reader, &mut buf4))?;
                         let compressed_size = u32::from_le_bytes(buf4);
 
                         let mut buf2 = [0u8; 2];
-                        async_io::block_on(futures_lite::io::AsyncReadExt::read_exact(
-                            reader, &mut buf2,
-                        ))?;
+                        async_io::block_on(AsyncReadExt::read_exact(reader, &mut buf2))?;
                         let brotli_magic = u16::from_le_bytes(buf2);
                         if brotli_magic != BROTLI_MAGIC {
                             return Ok(false);
                         }
 
-                        async_io::block_on(futures_lite::io::AsyncReadExt::read_exact(
-                            reader, &mut buf2,
-                        ))?;
+                        async_io::block_on(AsyncReadExt::read_exact(reader, &mut buf2))?;
                         let _uncompressed_hint = u16::from_le_bytes(buf2);
 
                         *remaining_in_frame = compressed_size;
@@ -203,31 +191,31 @@ impl<R: AsyncRead + Unpin> InnerReader<R> {
     }
 }
 
-impl<R: AsyncRead + Unpin> futures_lite::io::AsyncRead for InnerReader<R> {
+impl<R: AsyncRead + Unpin> AsyncRead for InnerReader<R> {
     fn poll_read(
-        mut self: std::pin::Pin<&mut Self>,
-        cx: &mut std::task::Context<'_>,
+        mut self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
         buf: &mut [u8],
-    ) -> std::task::Poll<std::io::Result<usize>> {
+    ) -> Poll<std::io::Result<usize>> {
         match &mut *self {
-            InnerReader::Empty => std::task::Poll::Ready(Ok(0)),
+            InnerReader::Empty => Poll::Ready(Ok(0)),
             InnerReader::Standard {
                 reader,
                 header_buffer,
                 header_finished,
             } => {
                 if !*header_finished {
-                    let poll = std::pin::Pin::new(header_buffer).poll_read(cx, buf);
-                    if let std::task::Poll::Ready(Ok(bytes_read)) = poll {
+                    let poll = Pin::new(header_buffer).poll_read(cx, buf);
+                    if let Poll::Ready(Ok(bytes_read)) = poll {
                         if bytes_read > 0 {
-                            return std::task::Poll::Ready(Ok(bytes_read));
+                            return Poll::Ready(Ok(bytes_read));
                         }
                         *header_finished = true;
                     } else {
                         return poll;
                     }
                 }
-                std::pin::Pin::new(reader).poll_read(cx, buf)
+                Pin::new(reader).poll_read(cx, buf)
             }
             InnerReader::Skippable {
                 reader,
@@ -235,20 +223,20 @@ impl<R: AsyncRead + Unpin> futures_lite::io::AsyncRead for InnerReader<R> {
                 frame_finished,
             } => {
                 if *frame_finished || *remaining_in_frame == 0 {
-                    return std::task::Poll::Ready(Ok(0));
+                    return Poll::Ready(Ok(0));
                 }
                 let bytes_to_read = std::cmp::min(*remaining_in_frame as usize, buf.len());
-                let poll = std::pin::Pin::new(reader).poll_read(cx, &mut buf[..bytes_to_read]);
-                if let std::task::Poll::Ready(Ok(bytes_read)) = poll {
+                let poll = Pin::new(reader).poll_read(cx, &mut buf[..bytes_to_read]);
+                if let Poll::Ready(Ok(bytes_read)) = poll {
                     if bytes_read == 0 {
                         *frame_finished = true;
-                        return std::task::Poll::Ready(Ok(0));
+                        return Poll::Ready(Ok(0));
                     }
                     *remaining_in_frame -= bytes_read as u32;
                     if *remaining_in_frame == 0 {
                         *frame_finished = true;
                     }
-                    std::task::Poll::Ready(Ok(bytes_read))
+                    Poll::Ready(Ok(bytes_read))
                 } else {
                     poll
                 }
@@ -270,7 +258,7 @@ enum InnerWriter<W: AsyncWrite + Unpin> {
     Standard(AsyncBrotliEncoder<W>),
     Framed {
         writer: W,
-        compressor: Option<AsyncBrotliEncoder<futures_lite::io::Cursor<Vec<u8>>>>,
+        compressor: Option<AsyncBrotliEncoder<Cursor<Vec<u8>>>>,
         frame_size: usize,
         uncompressed_bytes_in_frame: usize,
         pending_frames: VecDeque<Vec<u8>>,
@@ -288,7 +276,7 @@ impl<W: AsyncWrite + Unpin> BrotliEncoder<W> {
             );
             InnerWriter::Standard(compressor)
         } else {
-            let cursor = futures_lite::io::Cursor::new(Vec::with_capacity(frame_size));
+            let cursor = Cursor::new(Vec::with_capacity(frame_size));
             let compressor = Some(AsyncBrotliEncoder::with_quality(
                 cursor,
                 async_compression::Level::Precise(quality as i32),
@@ -329,16 +317,16 @@ impl<W: AsyncWrite + Unpin> BrotliEncoder<W> {
 }
 
 #[cfg(feature = "compress")]
-impl<W: AsyncWrite + Unpin> futures_lite::io::AsyncWrite for BrotliEncoder<W> {
+impl<W: AsyncWrite + Unpin> AsyncWrite for BrotliEncoder<W> {
     fn poll_write(
-        mut self: std::pin::Pin<&mut Self>,
-        cx: &mut std::task::Context<'_>,
+        mut self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
         buf: &[u8],
-    ) -> std::task::Poll<std::io::Result<usize>> {
+    ) -> Poll<std::io::Result<usize>> {
         let quality = self.quality;
         match &mut self.inner {
             InnerWriter::Standard(compressor) => {
-                let mut pin = std::pin::Pin::new(compressor);
+                let mut pin = Pin::new(compressor);
                 pin.as_mut().poll_write(cx, buf)
             }
             InnerWriter::Framed {
@@ -351,12 +339,10 @@ impl<W: AsyncWrite + Unpin> futures_lite::io::AsyncWrite for BrotliEncoder<W> {
             } => {
                 if let Some(front) = pending_frames.front_mut() {
                     if *pending_offset < front.len() {
-                        match std::pin::Pin::new(&mut *writer)
-                            .poll_write(cx, &front[*pending_offset..])
-                        {
-                            std::task::Poll::Ready(Ok(w)) => {
+                        match Pin::new(&mut *writer).poll_write(cx, &front[*pending_offset..]) {
+                            Poll::Ready(Ok(w)) => {
                                 if w == 0 {
-                                    return std::task::Poll::Ready(Ok(0));
+                                    return Poll::Ready(Ok(0));
                                 }
                                 *pending_offset += w;
                                 if *pending_offset >= front.len() {
@@ -364,25 +350,25 @@ impl<W: AsyncWrite + Unpin> futures_lite::io::AsyncWrite for BrotliEncoder<W> {
                                     *pending_offset = 0;
                                 }
                             }
-                            std::task::Poll::Ready(Err(e)) => {
-                                return std::task::Poll::Ready(Err(e));
+                            Poll::Ready(Err(e)) => {
+                                return Poll::Ready(Err(e));
                             }
-                            std::task::Poll::Pending => {}
+                            Poll::Pending => {}
                         }
                     }
                 }
 
                 if buf.is_empty() {
-                    return std::task::Poll::Ready(Ok(0));
+                    return Poll::Ready(Ok(0));
                 }
 
                 let cap = *frame_size - *uncompressed_bytes_in_frame;
                 let to_write = std::cmp::min(buf.len(), cap);
                 if to_write == 0 {
                     let mut comp = compressor.take().expect("no compressor set");
-                    let mut pin = std::pin::Pin::new(&mut comp);
+                    let mut pin = Pin::new(&mut comp);
                     match pin.as_mut().poll_close(cx) {
-                        std::task::Poll::Ready(Ok(())) => {
+                        Poll::Ready(Ok(())) => {
                             let cursor = comp.into_inner();
                             let data = cursor.into_inner();
                             let frame =
@@ -390,29 +376,28 @@ impl<W: AsyncWrite + Unpin> futures_lite::io::AsyncWrite for BrotliEncoder<W> {
                             if !frame.is_empty() {
                                 pending_frames.push_back(frame);
                             }
-                            let new_cursor =
-                                futures_lite::io::Cursor::new(Vec::with_capacity(*frame_size));
+                            let new_cursor = Cursor::new(Vec::with_capacity(*frame_size));
                             *compressor = Some(AsyncBrotliEncoder::with_quality(
                                 new_cursor,
                                 async_compression::Level::Precise(quality as i32),
                             ));
                             *uncompressed_bytes_in_frame = 0;
-                            std::task::Poll::Pending
+                            Poll::Pending
                         }
-                        std::task::Poll::Ready(Err(e)) => std::task::Poll::Ready(Err(e)),
-                        std::task::Poll::Pending => std::task::Poll::Pending,
+                        Poll::Ready(Err(e)) => Poll::Ready(Err(e)),
+                        Poll::Pending => Poll::Pending,
                     }
                 } else {
                     let comp = compressor.as_mut().expect("no compressor set");
-                    let mut pin = std::pin::Pin::new(comp);
+                    let mut pin = Pin::new(comp);
                     match pin.as_mut().poll_write(cx, &buf[..to_write]) {
-                        std::task::Poll::Ready(Ok(n)) => {
+                        Poll::Ready(Ok(n)) => {
                             *uncompressed_bytes_in_frame += n;
                             if *uncompressed_bytes_in_frame >= *frame_size {
                                 let mut comp2 = compressor.take().expect("no compressor set");
-                                let mut pin2 = std::pin::Pin::new(&mut comp2);
+                                let mut pin2 = Pin::new(&mut comp2);
                                 match pin2.as_mut().poll_close(cx) {
-                                    std::task::Poll::Ready(Ok(())) => {
+                                    Poll::Ready(Ok(())) => {
                                         let cursor = comp2.into_inner();
                                         let data = cursor.into_inner();
                                         let frame = Self::build_frame_bytes(
@@ -422,39 +407,35 @@ impl<W: AsyncWrite + Unpin> futures_lite::io::AsyncWrite for BrotliEncoder<W> {
                                         if !frame.is_empty() {
                                             pending_frames.push_back(frame);
                                         }
-                                        let new_cursor = futures_lite::io::Cursor::new(
-                                            Vec::with_capacity(*frame_size),
-                                        );
+                                        let new_cursor =
+                                            Cursor::new(Vec::with_capacity(*frame_size));
                                         *compressor = Some(AsyncBrotliEncoder::with_quality(
                                             new_cursor,
                                             async_compression::Level::Precise(quality as i32),
                                         ));
                                         *uncompressed_bytes_in_frame = 0;
                                     }
-                                    std::task::Poll::Ready(Err(e)) => {
-                                        return std::task::Poll::Ready(Err(e));
+                                    Poll::Ready(Err(e)) => {
+                                        return Poll::Ready(Err(e));
                                     }
-                                    std::task::Poll::Pending => return std::task::Poll::Pending,
+                                    Poll::Pending => return Poll::Pending,
                                 }
                             }
-                            std::task::Poll::Ready(Ok(n))
+                            Poll::Ready(Ok(n))
                         }
-                        std::task::Poll::Ready(Err(e)) => std::task::Poll::Ready(Err(e)),
-                        std::task::Poll::Pending => std::task::Poll::Pending,
+                        Poll::Ready(Err(e)) => Poll::Ready(Err(e)),
+                        Poll::Pending => Poll::Pending,
                     }
                 }
             }
         }
     }
 
-    fn poll_flush(
-        mut self: std::pin::Pin<&mut Self>,
-        cx: &mut std::task::Context<'_>,
-    ) -> std::task::Poll<std::io::Result<()>> {
+    fn poll_flush(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<std::io::Result<()>> {
         let quality = self.quality;
         match &mut self.inner {
             InnerWriter::Standard(compressor) => {
-                let mut pin = std::pin::Pin::new(compressor);
+                let mut pin = Pin::new(compressor);
                 pin.as_mut().poll_flush(cx)
             }
             InnerWriter::Framed {
@@ -467,9 +448,9 @@ impl<W: AsyncWrite + Unpin> futures_lite::io::AsyncWrite for BrotliEncoder<W> {
             } => {
                 if *uncompressed_bytes_in_frame > 0 {
                     let mut comp = compressor.take().expect("no compressor set");
-                    let mut pin = std::pin::Pin::new(&mut comp);
+                    let mut pin = Pin::new(&mut comp);
                     match pin.as_mut().poll_close(cx) {
-                        std::task::Poll::Ready(Ok(())) => {
+                        Poll::Ready(Ok(())) => {
                             let cursor = comp.into_inner();
                             let data = cursor.into_inner();
                             let frame =
@@ -477,16 +458,15 @@ impl<W: AsyncWrite + Unpin> futures_lite::io::AsyncWrite for BrotliEncoder<W> {
                             if !frame.is_empty() {
                                 pending_frames.push_back(frame);
                             }
-                            let new_cursor =
-                                futures_lite::io::Cursor::new(Vec::with_capacity(*frame_size));
+                            let new_cursor = Cursor::new(Vec::with_capacity(*frame_size));
                             *compressor = Some(AsyncBrotliEncoder::with_quality(
                                 new_cursor,
                                 async_compression::Level::Precise(quality as i32),
                             ));
                             *uncompressed_bytes_in_frame = 0;
                         }
-                        std::task::Poll::Ready(Err(e)) => return std::task::Poll::Ready(Err(e)),
-                        std::task::Poll::Pending => return std::task::Poll::Pending,
+                        Poll::Ready(Err(e)) => return Poll::Ready(Err(e)),
+                        Poll::Pending => return Poll::Pending,
                     }
                 }
 
@@ -496,11 +476,10 @@ impl<W: AsyncWrite + Unpin> futures_lite::io::AsyncWrite for BrotliEncoder<W> {
                         *pending_offset = 0;
                         continue;
                     }
-                    match std::pin::Pin::new(&mut *writer).poll_write(cx, &front[*pending_offset..])
-                    {
-                        std::task::Poll::Ready(Ok(w)) => {
+                    match Pin::new(&mut *writer).poll_write(cx, &front[*pending_offset..]) {
+                        Poll::Ready(Ok(w)) => {
                             if w == 0 {
-                                return std::task::Poll::Pending;
+                                return Poll::Pending;
                             }
                             *pending_offset += w;
                             if *pending_offset >= front.len() {
@@ -508,25 +487,22 @@ impl<W: AsyncWrite + Unpin> futures_lite::io::AsyncWrite for BrotliEncoder<W> {
                                 *pending_offset = 0;
                             }
                         }
-                        std::task::Poll::Ready(Err(e)) => return std::task::Poll::Ready(Err(e)),
-                        std::task::Poll::Pending => return std::task::Poll::Pending,
+                        Poll::Ready(Err(e)) => return Poll::Ready(Err(e)),
+                        Poll::Pending => return Poll::Pending,
                     }
                 }
 
-                let mut pin = std::pin::Pin::new(&mut *writer);
+                let mut pin = Pin::new(&mut *writer);
                 pin.as_mut().poll_flush(cx)
             }
         }
     }
 
-    fn poll_close(
-        mut self: std::pin::Pin<&mut Self>,
-        cx: &mut std::task::Context<'_>,
-    ) -> std::task::Poll<std::io::Result<()>> {
+    fn poll_close(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<std::io::Result<()>> {
         let quality = self.quality;
         match &mut self.inner {
             InnerWriter::Standard(compressor) => {
-                let mut pin = std::pin::Pin::new(compressor);
+                let mut pin = Pin::new(compressor);
                 pin.as_mut().poll_close(cx)
             }
             InnerWriter::Framed {
@@ -539,9 +515,9 @@ impl<W: AsyncWrite + Unpin> futures_lite::io::AsyncWrite for BrotliEncoder<W> {
             } => {
                 if *uncompressed_bytes_in_frame > 0 {
                     let mut comp = compressor.take().expect("no compressor set");
-                    let mut pin = std::pin::Pin::new(&mut comp);
+                    let mut pin = Pin::new(&mut comp);
                     match pin.as_mut().poll_close(cx) {
-                        std::task::Poll::Ready(Ok(())) => {
+                        Poll::Ready(Ok(())) => {
                             let cursor = comp.into_inner();
                             let data = cursor.into_inner();
                             let frame =
@@ -549,16 +525,15 @@ impl<W: AsyncWrite + Unpin> futures_lite::io::AsyncWrite for BrotliEncoder<W> {
                             if !frame.is_empty() {
                                 pending_frames.push_back(frame);
                             }
-                            let new_cursor =
-                                futures_lite::io::Cursor::new(Vec::with_capacity(*frame_size));
+                            let new_cursor = Cursor::new(Vec::with_capacity(*frame_size));
                             *compressor = Some(AsyncBrotliEncoder::with_quality(
                                 new_cursor,
                                 async_compression::Level::Precise(quality as i32),
                             ));
                             *uncompressed_bytes_in_frame = 0;
                         }
-                        std::task::Poll::Ready(Err(e)) => return std::task::Poll::Ready(Err(e)),
-                        std::task::Poll::Pending => return std::task::Poll::Pending,
+                        Poll::Ready(Err(e)) => return Poll::Ready(Err(e)),
+                        Poll::Pending => return Poll::Pending,
                     }
                 }
 
@@ -568,11 +543,10 @@ impl<W: AsyncWrite + Unpin> futures_lite::io::AsyncWrite for BrotliEncoder<W> {
                         *pending_offset = 0;
                         continue;
                     }
-                    match std::pin::Pin::new(&mut *writer).poll_write(cx, &front[*pending_offset..])
-                    {
-                        std::task::Poll::Ready(Ok(w)) => {
+                    match Pin::new(&mut *writer).poll_write(cx, &front[*pending_offset..]) {
+                        Poll::Ready(Ok(w)) => {
                             if w == 0 {
-                                return std::task::Poll::Pending;
+                                return Poll::Pending;
                             }
                             *pending_offset += w;
                             if *pending_offset >= front.len() {
@@ -580,12 +554,12 @@ impl<W: AsyncWrite + Unpin> futures_lite::io::AsyncWrite for BrotliEncoder<W> {
                                 *pending_offset = 0;
                             }
                         }
-                        std::task::Poll::Ready(Err(e)) => return std::task::Poll::Ready(Err(e)),
-                        std::task::Poll::Pending => return std::task::Poll::Pending,
+                        Poll::Ready(Err(e)) => return Poll::Ready(Err(e)),
+                        Poll::Pending => return Poll::Pending,
                     }
                 }
 
-                let mut pin = std::pin::Pin::new(&mut *writer);
+                let mut pin = Pin::new(&mut *writer);
                 pin.as_mut().poll_close(cx)
             }
         }

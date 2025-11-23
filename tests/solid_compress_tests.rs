@@ -5,6 +5,8 @@ use tempfile::*;
 #[cfg(feature = "compress")]
 #[tokio::test]
 async fn compress_multi_files_solid() {
+    use futures_lite::io::Cursor;
+
     let temp_dir = tempdir().unwrap();
     let folder = temp_dir.path().join("folder");
     async_fs::create_dir(&folder).await.unwrap();
@@ -19,7 +21,7 @@ async fn compress_multi_files_solid() {
     }
     let dest = temp_dir.path().join("folder.7z");
 
-    let mut sz = ArchiveWriter::new(futures_lite::io::Cursor::new(Vec::<u8>::new()))
+    let mut sz = ArchiveWriter::new(Cursor::new(Vec::<u8>::new()))
         .await
         .unwrap();
     sz.push_source_path(&folder, |_| async { true })
@@ -49,6 +51,8 @@ async fn compress_multi_files_solid() {
 #[cfg(feature = "compress")]
 #[tokio::test]
 async fn compress_multi_files_mix_solid_and_non_solid() {
+    use futures_lite::io::Cursor;
+
     let temp_dir = tempdir().unwrap();
     let folder = temp_dir.path().join("folder");
     async_fs::create_dir(&folder).await.unwrap();
@@ -63,7 +67,7 @@ async fn compress_multi_files_mix_solid_and_non_solid() {
     }
     let dest = temp_dir.path().join("folder.7z");
 
-    let mut sz = ArchiveWriter::new(futures_lite::io::Cursor::new(Vec::<u8>::new()))
+    let mut sz = ArchiveWriter::new(Cursor::new(Vec::<u8>::new()))
         .await
         .unwrap();
 
@@ -84,7 +88,7 @@ async fn compress_multi_files_mix_solid_and_non_solid() {
         let data = async_fs::read(&src).await.unwrap();
         sz.push_archive_entry(
             ArchiveEntry::from_path(&src, name).await,
-            Some(futures_lite::io::Cursor::new(data)),
+            Some(Cursor::new(data)),
         )
         .await
         .expect("ok");

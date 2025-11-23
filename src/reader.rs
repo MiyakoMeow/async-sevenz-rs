@@ -1,6 +1,16 @@
-use std::{collections::HashMap, future::Future, io, num::NonZeroUsize, pin::Pin};
+#[cfg(not(target_arch = "wasm32"))]
+use std::path::Path;
+use std::{
+    collections::HashMap,
+    future::Future,
+    io,
+    num::NonZeroUsize,
+    pin::Pin,
+    sync::{Arc, Mutex},
+    task::{Context, Poll},
+};
 
-use futures_lite::io::{AsyncRead, AsyncReadExt, AsyncSeek, AsyncSeekExt, SeekFrom};
+use futures_lite::io::{AsyncRead, AsyncReadExt, AsyncSeek, AsyncSeekExt, Cursor, SeekFrom};
 
 use async_fs as afs;
 use crc32fast::Hasher;
@@ -31,18 +41,18 @@ impl<R: AsyncRead + Unpin> BoundedReader<R> {
     }
 }
 
-impl<R: AsyncRead + Unpin> futures_lite::io::AsyncRead for BoundedReader<R> {
+impl<R: AsyncRead + Unpin> AsyncRead for BoundedReader<R> {
     fn poll_read(
-        mut self: std::pin::Pin<&mut Self>,
-        cx: &mut std::task::Context<'_>,
+        mut self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
         buf: &mut [u8],
-    ) -> std::task::Poll<std::io::Result<usize>> {
+    ) -> Poll<std::io::Result<usize>> {
         if self.remain == 0 {
-            return std::task::Poll::Ready(Ok(0));
+            return Poll::Ready(Ok(0));
         }
         let bound = buf.len().min(self.remain);
-        let poll = std::pin::Pin::new(&mut self.inner).poll_read(cx, &mut buf[..bound]);
-        if let std::task::Poll::Ready(Ok(size)) = &poll {
+        let poll = Pin::new(&mut self.inner).poll_read(cx, &mut buf[..bound]);
+        if let Poll::Ready(Ok(size)) = &poll {
             self.remain -= *size;
         }
         poll
@@ -53,7 +63,7 @@ impl<R: AsyncRead + Unpin> futures_lite::io::AsyncRead for BoundedReader<R> {
 /// needs to re-seek every read operation.
 #[derive(Debug)]
 pub(crate) struct SharedBoundedReader<'a, R> {
-    inner: std::sync::Arc<std::sync::Mutex<&'a mut R>>,
+    inner: Arc<Mutex<&'a mut R>>,
     cur: u64,
     bounds: (u64, u64),
 }
@@ -61,47 +71,45 @@ pub(crate) struct SharedBoundedReader<'a, R> {
 impl<'a, R> Clone for SharedBoundedReader<'a, R> {
     fn clone(&self) -> Self {
         Self {
-            inner: std::sync::Arc::clone(&self.inner),
+            inner: Arc::clone(&self.inner),
             cur: self.cur,
             bounds: self.bounds,
         }
     }
 }
 
-impl<'a, R: AsyncRead + AsyncSeek + Unpin> futures_lite::io::AsyncRead
-    for SharedBoundedReader<'a, R>
-{
+impl<'a, R: AsyncRead + AsyncSeek + Unpin> AsyncRead for SharedBoundedReader<'a, R> {
     fn poll_read(
-        mut self: std::pin::Pin<&mut Self>,
-        cx: &mut std::task::Context<'_>,
+        mut self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
         buf: &mut [u8],
-    ) -> std::task::Poll<std::io::Result<usize>> {
+    ) -> Poll<std::io::Result<usize>> {
         if self.cur >= self.bounds.1 {
-            return std::task::Poll::Ready(Ok(0));
+            return Poll::Ready(Ok(0));
         }
         let cur = self.cur;
         let mut inner = self.inner.lock().unwrap();
-        match std::pin::Pin::new(&mut *inner).poll_seek(cx, SeekFrom::Start(cur)) {
-            std::task::Poll::Pending => return std::task::Poll::Pending,
-            std::task::Poll::Ready(Ok(_)) => {}
-            std::task::Poll::Ready(Err(e)) => return std::task::Poll::Ready(Err(e)),
+        match Pin::new(&mut *inner).poll_seek(cx, SeekFrom::Start(cur)) {
+            Poll::Pending => return Poll::Pending,
+            Poll::Ready(Ok(_)) => {}
+            Poll::Ready(Err(e)) => return Poll::Ready(Err(e)),
         }
         let bound = buf.len().min((self.bounds.1 - cur) as usize);
-        let poll = std::pin::Pin::new(&mut *inner).poll_read(cx, &mut buf[..bound]);
+        let poll = Pin::new(&mut *inner).poll_read(cx, &mut buf[..bound]);
         drop(inner);
         match poll {
-            std::task::Poll::Pending => std::task::Poll::Pending,
-            std::task::Poll::Ready(Ok(size)) => {
+            Poll::Pending => Poll::Pending,
+            Poll::Ready(Ok(size)) => {
                 self.cur += size as u64;
-                std::task::Poll::Ready(Ok(size))
+                Poll::Ready(Ok(size))
             }
-            std::task::Poll::Ready(Err(e)) => std::task::Poll::Ready(Err(e)),
+            Poll::Ready(Err(e)) => Poll::Ready(Err(e)),
         }
     }
 }
 
 impl<'a, R: AsyncRead + AsyncSeek + Unpin> SharedBoundedReader<'a, R> {
-    fn new(inner: std::sync::Arc<std::sync::Mutex<&'a mut R>>, bounds: (u64, u64)) -> Self {
+    fn new(inner: Arc<Mutex<&'a mut R>>, bounds: (u64, u64)) -> Self {
         Self {
             inner,
             cur: bounds.0,
@@ -130,19 +138,17 @@ impl<R> Crc32VerifyingReader<R> {
 
 // synchronous Read impl removed to prefer async pipeline
 
-impl<R: futures_lite::io::AsyncRead + Unpin> futures_lite::io::AsyncRead
-    for Crc32VerifyingReader<R>
-{
+impl<R: AsyncRead + Unpin> AsyncRead for Crc32VerifyingReader<R> {
     fn poll_read(
-        mut self: std::pin::Pin<&mut Self>,
-        cx: &mut std::task::Context<'_>,
+        mut self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
         buf: &mut [u8],
-    ) -> std::task::Poll<std::io::Result<usize>> {
+    ) -> Poll<std::io::Result<usize>> {
         if self.remaining <= 0 {
-            return std::task::Poll::Ready(Ok(0));
+            return Poll::Ready(Ok(0));
         }
-        let poll = std::pin::Pin::new(&mut self.inner).poll_read(cx, buf);
-        if let std::task::Poll::Ready(Ok(size)) = poll {
+        let poll = Pin::new(&mut self.inner).poll_read(cx, buf);
+        if let Poll::Ready(Ok(size)) = poll {
             if size > 0 {
                 self.remaining -= size as i64;
                 self.crc_digest.update(&buf[..size]);
@@ -150,7 +156,7 @@ impl<R: futures_lite::io::AsyncRead + Unpin> futures_lite::io::AsyncRead
             if self.remaining <= 0 {
                 let d = std::mem::replace(&mut self.crc_digest, Hasher::new()).finalize();
                 if d as u64 != self.expected_value {
-                    return std::task::Poll::Ready(Err(std::io::Error::other(
+                    return Poll::Ready(Err(std::io::Error::other(
                         Error::ChecksumVerificationFailed,
                     )));
                 }
@@ -165,11 +171,13 @@ impl Archive {
     ///
     /// Returns the parsed `Archive` metadata without decoding file contents.
     #[cfg(not(target_arch = "wasm32"))]
-    pub async fn open(path: impl AsRef<std::path::Path>) -> Result<Archive, Error> {
+    pub async fn open(path: impl AsRef<Path>) -> Result<Archive, Error> {
+        use futures_lite::io::Cursor;
+
         let data = afs::read(path.as_ref())
             .await
             .map_err(|e| Error::file_open(e, path.as_ref().to_string_lossy().to_string()))?;
-        let mut cursor = futures_lite::io::Cursor::new(data);
+        let mut cursor = Cursor::new(data);
         Self::read(&mut cursor, &Password::empty()).await
     }
 
@@ -178,13 +186,13 @@ impl Archive {
     /// Returns the parsed `Archive` metadata without decoding file contents.
     #[cfg(not(target_arch = "wasm32"))]
     pub async fn open_with_password(
-        path: impl AsRef<std::path::Path>,
+        path: impl AsRef<Path>,
         password: &Password,
     ) -> Result<Archive, Error> {
         let data = afs::read(path.as_ref())
             .await
             .map_err(|e| Error::file_open(e, path.as_ref().to_string_lossy().to_string()))?;
-        let mut cursor = futures_lite::io::Cursor::new(data);
+        let mut cursor = Cursor::new(data);
         Self::read(&mut cursor, password).await
     }
 
@@ -414,7 +422,7 @@ impl Archive {
         let mut archive = Archive::default();
         let nid = buf.first().copied().unwrap_or(0);
         if nid == K_ENCODED_HEADER {
-            let mut cursor = futures_lite::io::Cursor::new(&buf[1..]);
+            let mut cursor = Cursor::new(&buf[1..]);
             let (mut out_reader, buf_size) = Self::read_encoded_header(
                 &mut cursor,
                 reader,
@@ -432,7 +440,7 @@ impl Archive {
         }
         let nid = buf.first().copied().unwrap_or(0);
         if nid == K_HEADER {
-            let mut header = futures_lite::io::Cursor::new(&buf[1..]);
+            let mut header = Cursor::new(&buf[1..]);
             Self::read_header(&mut header, &mut archive).await?;
         } else {
             return Err(Error::other("Broken or unsupported archive: no Header"));
@@ -452,13 +460,7 @@ impl Archive {
         archive: &mut Archive,
         password: &Password,
         thread_count: u32,
-    ) -> Result<
-        (
-            Box<dyn futures_lite::io::AsyncRead + Unpin + Send + 'r>,
-            usize,
-        ),
-        Error,
-    > {
+    ) -> Result<(Box<dyn AsyncRead + Unpin + Send + 'r>, usize), Error> {
         Self::read_streams_info(header, archive).await?;
         let block = archive
             .blocks
@@ -474,7 +476,7 @@ impl Archive {
         let coder_len = block.coders.len();
         let unpack_size = block.get_unpack_size() as usize;
         let pack_size = archive.pack_sizes[first_pack_stream_index] as usize;
-        let mut decoder: Box<dyn futures_lite::io::AsyncRead + Unpin + Send> =
+        let mut decoder: Box<dyn AsyncRead + Unpin + Send> =
             Box::new(BoundedReader::new(reader, pack_size));
         let mut decoder = if coder_len > 0 {
             for (index, coder) in block.ordered_coder_iter() {
@@ -1253,7 +1255,7 @@ struct IndexEntry {
 }
 
 /// Reads a 7z archive file.
-pub struct ArchiveReader<R: futures_lite::io::AsyncRead + futures_lite::io::AsyncSeek + Unpin> {
+pub struct ArchiveReader<R: AsyncRead + AsyncSeek + Unpin> {
     source: R,
     archive: Archive,
     password: Password,
@@ -1262,27 +1264,24 @@ pub struct ArchiveReader<R: futures_lite::io::AsyncRead + futures_lite::io::Asyn
 }
 
 #[cfg(not(target_arch = "wasm32"))]
-impl ArchiveReader<futures_lite::io::Cursor<Vec<u8>>> {
+impl ArchiveReader<Cursor<Vec<u8>>> {
     /// Opens a 7z archive file asynchronously and creates an `ArchiveReader` using an in-memory buffer.
-    pub async fn open(
-        path: impl AsRef<std::path::Path>,
-        password: Password,
-    ) -> Result<Self, Error> {
+    pub async fn open(path: impl AsRef<Path>, password: Password) -> Result<Self, Error> {
         let data = afs::read(path.as_ref())
             .await
             .map_err(|e| Error::file_open(e, path.as_ref().to_string_lossy().to_string()))?;
-        let cursor = futures_lite::io::Cursor::new(data);
+        let cursor = Cursor::new(data);
         Self::new(cursor, password).await
     }
 
     /// Opens a 7z archive from in-memory bytes asynchronously.
     pub async fn open_from_bytes(data: Vec<u8>, password: Password) -> Result<Self, Error> {
-        let cursor = futures_lite::io::Cursor::new(data);
+        let cursor = Cursor::new(data);
         Self::new(cursor, password).await
     }
 }
 
-impl<R: futures_lite::io::AsyncRead + futures_lite::io::AsyncSeek + Unpin + Send> ArchiveReader<R> {
+impl<R: AsyncRead + AsyncSeek + Unpin + Send> ArchiveReader<R> {
     /// Creates a [`ArchiveReader`] to read a 7z archive file from the given `source` reader.
     #[inline]
     pub(crate) async fn new(mut source: R, password: Password) -> Result<Self, Error> {
@@ -1370,13 +1369,7 @@ impl<R: futures_lite::io::AsyncRead + futures_lite::io::AsyncSeek + Unpin + Send
         block_index: usize,
         password: &Password,
         thread_count: u32,
-    ) -> Result<
-        (
-            Box<dyn futures_lite::io::AsyncRead + Unpin + Send + 'r>,
-            usize,
-        ),
-        Error,
-    > {
+    ) -> Result<(Box<dyn AsyncRead + Unpin + Send + 'r>, usize), Error> {
         let block = &archive.blocks[block_index];
         if block.total_input_streams > block.total_output_streams {
             return Self::build_decode_stack2(source, archive, block_index, password, thread_count);
@@ -1408,7 +1401,7 @@ impl<R: futures_lite::io::AsyncRead + futures_lite::io::AsyncSeek + Unpin + Send
         AsyncSeekExt::seek(source, SeekFrom::Start(block_offset)).await?;
         let pack_size = archive.pack_sizes[first_pack_stream_index] as usize;
 
-        let mut decoder: Box<dyn futures_lite::io::AsyncRead + Unpin + Send> =
+        let mut decoder: Box<dyn AsyncRead + Unpin + Send> =
             Box::new(BoundedReader::new(source, pack_size));
         let block = &archive.blocks[block_index];
         for (index, coder) in block.ordered_coder_iter() {
@@ -1445,13 +1438,7 @@ impl<R: futures_lite::io::AsyncRead + futures_lite::io::AsyncSeek + Unpin + Send
         block_index: usize,
         password: &Password,
         thread_count: u32,
-    ) -> Result<
-        (
-            Box<dyn futures_lite::io::AsyncRead + Unpin + Send + 'r>,
-            usize,
-        ),
-        Error,
-    > {
+    ) -> Result<(Box<dyn AsyncRead + Unpin + Send + 'r>, usize), Error> {
         const MAX_CODER_COUNT: usize = 32;
         let block = &archive.blocks[block_index];
         if block.coders.len() > MAX_CODER_COUNT {
@@ -1462,7 +1449,7 @@ impl<R: futures_lite::io::AsyncRead + futures_lite::io::AsyncSeek + Unpin + Send
         }
 
         assert!(block.total_input_streams > block.total_output_streams);
-        let shared_source = std::sync::Arc::new(std::sync::Mutex::new(source));
+        let shared_source = Arc::new(Mutex::new(source));
         let first_pack_stream_index = archive.stream_map.block_first_pack_stream_index[block_index];
         let start_pos = SIGNATURE_HEADER_SIZE + archive.pack_pos;
         let offsets = &archive.stream_map.pack_stream_offsets[first_pack_stream_index..];
@@ -1474,7 +1461,7 @@ impl<R: futures_lite::io::AsyncRead + futures_lite::io::AsyncSeek + Unpin + Send
             let pack_size = archive.pack_sizes[first_pack_stream_index + i];
 
             let pack_reader = SharedBoundedReader::new(
-                std::sync::Arc::clone(&shared_source),
+                Arc::clone(&shared_source),
                 (pack_pos, pack_pos + pack_size),
             );
 
@@ -1510,8 +1497,7 @@ impl<R: futures_lite::io::AsyncRead + futures_lite::io::AsyncSeek + Unpin + Send
         }
 
         let num_in_streams = block.coders[main_coder_index].num_in_streams as usize;
-        let mut inputs: Vec<Box<dyn futures_lite::io::AsyncRead + Unpin + Send>> =
-            Vec::with_capacity(num_in_streams);
+        let mut inputs: Vec<Box<dyn AsyncRead + Unpin + Send>> = Vec::with_capacity(num_in_streams);
         let start_i = coder_to_stream_map[main_coder_index];
         for i in start_i..num_in_streams + start_i {
             inputs.push(Self::get_in_stream(
@@ -1527,9 +1513,9 @@ impl<R: futures_lite::io::AsyncRead + futures_lite::io::AsyncSeek + Unpin + Send
             .into_iter()
             .map(crate::util::decompress::AsyncReadSeekAsStd::new)
             .collect::<Vec<_>>();
-        let mut decoder: Box<dyn futures_lite::io::AsyncRead + Unpin + Send> = Box::new(
-            AsyncStdRead::new(Bcj2Reader::new(inputs_std, block.get_unpack_size())),
-        );
+        let mut decoder: Box<dyn AsyncRead + Unpin + Send> = Box::new(AsyncStdRead::new(
+            Bcj2Reader::new(inputs_std, block.get_unpack_size()),
+        ));
         if block.has_crc {
             decoder = Box::new(Crc32VerifyingReader::new(
                 decoder,
@@ -1550,7 +1536,7 @@ impl<R: futures_lite::io::AsyncRead + futures_lite::io::AsyncSeek + Unpin + Send
         password: &Password,
         in_stream_index: usize,
         thread_count: u32,
-    ) -> Result<Box<dyn futures_lite::io::AsyncRead + Unpin + Send + 'r>, Error>
+    ) -> Result<Box<dyn AsyncRead + Unpin + Send + 'r>, Error>
     where
         R: 'r,
     {
@@ -1588,7 +1574,7 @@ impl<R: futures_lite::io::AsyncRead + futures_lite::io::AsyncSeek + Unpin + Send
         password: &Password,
         in_stream_index: usize,
         thread_count: u32,
-    ) -> Result<Box<dyn futures_lite::io::AsyncRead + Unpin + Send + 'r>, Error>
+    ) -> Result<Box<dyn AsyncRead + Unpin + Send + 'r>, Error>
     where
         R: 'r,
     {
@@ -1626,7 +1612,7 @@ impl<R: futures_lite::io::AsyncRead + futures_lite::io::AsyncSeek + Unpin + Send
     pub(crate) async fn for_each_entries<
         F: for<'a> FnMut(
             &'a ArchiveEntry,
-            &'a mut (dyn futures_lite::io::AsyncRead + Unpin + Send + 'a),
+            &'a mut (dyn AsyncRead + Unpin + Send + 'a),
         ) -> Pin<Box<dyn Future<Output = Result<bool, Error>> + Send + 'a>>,
     >(
         &mut self,
@@ -1729,7 +1715,7 @@ impl<R: futures_lite::io::AsyncRead + futures_lite::io::AsyncSeek + Unpin + Send
                 .await?;
 
                 let mut data = Vec::with_capacity(file.size as usize);
-                let mut decoder: Box<dyn futures_lite::io::AsyncRead + Unpin + Send> =
+                let mut decoder: Box<dyn AsyncRead + Unpin + Send> =
                     Box::new(BoundedReader::new(&mut block_reader, file.size as usize));
 
                 if file.has_crc {
@@ -1849,7 +1835,7 @@ impl<'a, R: AsyncRead + AsyncSeek + Unpin + Send> BlockDecoder<'a, R> {
     pub async fn for_each_entries<
         F: for<'b> FnMut(
             &'b ArchiveEntry,
-            &'b mut (dyn futures_lite::io::AsyncRead + Unpin + Send + 'b),
+            &'b mut (dyn AsyncRead + Unpin + Send + 'b),
         ) -> Pin<Box<dyn Future<Output = Result<bool, Error>> + Send + 'b>>,
     >(
         self,
@@ -1871,7 +1857,7 @@ impl<'a, R: AsyncRead + AsyncSeek + Unpin + Send> BlockDecoder<'a, R> {
         for file_index in start..(file_count + start) {
             let file = &archive.files[file_index];
             if file.has_stream && file.size > 0 {
-                let mut decoder: Box<dyn futures_lite::io::AsyncRead + Unpin + Send> =
+                let mut decoder: Box<dyn AsyncRead + Unpin + Send> =
                     Box::new(BoundedReader::new(&mut block_reader, file.size as usize));
                 if file.has_crc {
                     decoder = Box::new(Crc32VerifyingReader::new(

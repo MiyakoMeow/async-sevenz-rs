@@ -1,4 +1,5 @@
 use async_fs as afs;
+use futures_lite::io::{AsyncReadExt, Cursor};
 use std::path::PathBuf;
 
 use async_sevenz::{Archive, BlockDecoder, Password};
@@ -10,7 +11,7 @@ async fn main() {
         .await
         .unwrap();
     let data = afs::read("examples/data/sample.7z").await.unwrap();
-    let mut cursor = futures_lite::io::Cursor::new(data);
+    let mut cursor = Cursor::new(data);
     let block_count = archive.blocks.len();
     let my_file_name = "7zFormat.txt";
 
@@ -38,7 +39,7 @@ async fn main() {
                 } else {
                     Box::pin(async move {
                         let mut buf = Vec::new();
-                        futures_lite::io::AsyncReadExt::read_to_end(reader, &mut buf).await?;
+                        AsyncReadExt::read_to_end(reader, &mut buf).await?;
                         Ok(true)
                     })
                 }

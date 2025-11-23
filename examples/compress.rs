@@ -2,6 +2,7 @@ use std::{env, time::Instant};
 
 use async_fs as afs;
 use async_sevenz::{ArchiveReader, ArchiveWriter, Password};
+use futures_lite::io::Cursor;
 
 #[tokio::main]
 async fn main() {
@@ -55,7 +56,7 @@ async fn main() {
 
     let now = Instant::now();
 
-    let mut writer = ArchiveWriter::new(futures_lite::io::Cursor::new(Vec::<u8>::new()))
+    let mut writer = ArchiveWriter::new(Cursor::new(Vec::<u8>::new()))
         .await
         .unwrap_or_else(|error| panic!("Failed to create archive '{output_path}': {error}"));
 

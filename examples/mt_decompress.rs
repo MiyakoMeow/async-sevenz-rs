@@ -1,4 +1,5 @@
 use async_fs as afs;
+use futures_lite::io::Cursor;
 use std::{path::PathBuf, sync::Arc};
 
 use async_sevenz::{Archive, BlockDecoder, Password};
@@ -34,7 +35,7 @@ async fn main() {
         let data = data.clone();
 
         let handle = tokio::spawn(async move {
-            let mut source = futures_lite::io::Cursor::new(data);
+            let mut source = Cursor::new(data);
 
             // 2. For decoders that supports it, we can set the thread_count on the block decoder
             //    so that it uses multiple threads to decode the block. Currently only LZMA2 is
