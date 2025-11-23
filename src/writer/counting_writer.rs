@@ -1,4 +1,4 @@
-use futures::io::{AsyncSeek, AsyncSeekExt, AsyncWrite, AsyncWriteExt};
+use futures_lite::io::{AsyncSeek, AsyncSeekExt, AsyncWrite, AsyncWriteExt};
 use std::{
     cell::Cell,
     io::{Result, Seek, SeekFrom, Write},
@@ -65,9 +65,9 @@ impl<W: AsyncSeek + Unpin> Seek for CountingWriter<W> {
         async_io::block_on(AsyncSeekExt::seek(
             &mut self.inner,
             match pos {
-                SeekFrom::Start(n) => futures::io::SeekFrom::Start(n),
-                SeekFrom::End(i) => futures::io::SeekFrom::End(i),
-                SeekFrom::Current(i) => futures::io::SeekFrom::Current(i),
+                SeekFrom::Start(n) => futures_lite::io::SeekFrom::Start(n),
+                SeekFrom::End(i) => futures_lite::io::SeekFrom::End(i),
+                SeekFrom::Current(i) => futures_lite::io::SeekFrom::Current(i),
             },
         ))
     }

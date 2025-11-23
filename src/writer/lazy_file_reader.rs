@@ -1,7 +1,7 @@
 use std::{future::Future, path::PathBuf, pin::Pin};
 
 use async_fs as afs;
-use futures::io::AsyncRead;
+use futures_lite::io::AsyncRead;
 
 pub(crate) struct LazyFileReader {
     path: PathBuf,

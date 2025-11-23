@@ -2,7 +2,7 @@ use std::time::Instant;
 
 use async_fs as afs;
 use async_sevenz::default_entry_extract_fn;
-use futures::io::Cursor;
+use futures_lite::io::Cursor;
 
 #[tokio::main]
 async fn main() {

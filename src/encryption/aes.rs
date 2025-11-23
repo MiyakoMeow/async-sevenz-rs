@@ -1,7 +1,7 @@
 use std::pin::Pin;
 use std::task::{Context, Poll};
 
-use futures::io::{AsyncRead, AsyncWrite};
+use futures_lite::io::{AsyncRead, AsyncWrite};
 
 #[cfg(feature = "compress")]
 use aes::cipher::BlockEncryptMut;
@@ -433,7 +433,7 @@ impl<W: AsyncWrite + Unpin> AsyncWrite for Aes256Sha256Encoder<W> {
 
 #[cfg(all(test, feature = "compress"))]
 mod tests {
-    use futures::io::{AsyncReadExt, AsyncWriteExt, Cursor};
+    use futures_lite::io::{AsyncReadExt, AsyncWriteExt, Cursor};
 
     use super::*;
 

@@ -205,7 +205,7 @@ async fn test_compression_method(methods: &[EncoderConfiguration]) {
     let bytes: Vec<u8>;
 
     {
-        let mut writer = ArchiveWriter::new(futures::io::Cursor::new(Vec::<u8>::new()))
+        let mut writer = ArchiveWriter::new(futures_lite::io::Cursor::new(Vec::<u8>::new()))
             .await
             .unwrap();
         let file = ArchiveEntry::new_file("data/decompress_x86.exe");

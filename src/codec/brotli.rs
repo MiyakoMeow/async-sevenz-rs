@@ -1,4 +1,4 @@
-use futures::io::Cursor;
+use futures_lite::io::Cursor;
 #[cfg(feature = "compress")]
 use std::collections::VecDeque;
 #[cfg(feature = "compress")]
@@ -8,10 +8,10 @@ use crate::Error;
 use async_compression::futures::bufread::BrotliDecoder as AsyncBrotliDecoder;
 #[cfg(feature = "compress")]
 use async_compression::futures::write::BrotliEncoder as AsyncBrotliEncoder;
-use futures::io::AsyncRead;
+use futures_lite::io::AsyncRead;
 #[cfg(feature = "compress")]
-use futures::io::AsyncWrite;
-use futures::io::BufReader as AsyncBufReader;
+use futures_lite::io::AsyncWrite;
+use futures_lite::io::BufReader as AsyncBufReader;
 
 /// Magic bytes of a skippable frame format as used in brotli by zstdmt.
 const SKIPPABLE_FRAME_MAGIC: u32 = 0x184D2A50;
@@ -30,12 +30,14 @@ pub(crate) struct BrotliDecoder<R: AsyncRead + Unpin> {
 impl<R: AsyncRead + Unpin> BrotliDecoder<R> {
     pub(crate) fn new(mut input: R, buffer_size: usize) -> Result<Self, Error> {
         let mut header = [0u8; 16];
-        let header_read =
-            match async_io::block_on(futures::io::AsyncReadExt::read(&mut input, &mut header)) {
-                Ok(n) if n >= 4 => n,
-                Ok(_) => return Err(Error::other("Input too short")),
-                Err(e) => return Err(e.into()),
-            };
+        let header_read = match async_io::block_on(futures_lite::io::AsyncReadExt::read(
+            &mut input,
+            &mut header,
+        )) {
+            Ok(n) if n >= 4 => n,
+            Ok(_) => return Err(Error::other("Input too short")),
+            Err(e) => return Err(e.into()),
+        };
 
         let magic_value = u32::from_le_bytes([header[0], header[1], header[2], header[3]]);
 
@@ -68,7 +70,7 @@ impl<R: AsyncRead + Unpin> BrotliDecoder<R> {
     }
 }
 
-impl<R: AsyncRead + Unpin> futures::io::AsyncRead for BrotliDecoder<R> {
+impl<R: AsyncRead + Unpin> futures_lite::io::AsyncRead for BrotliDecoder<R> {
     fn poll_read(
         mut self: std::pin::Pin<&mut Self>,
         cx: &mut std::task::Context<'_>,
@@ -152,14 +154,16 @@ impl<R: AsyncRead + Unpin> InnerReader<R> {
                     return Ok(false);
                 }
                 let mut buf4 = [0u8; 4];
-                match async_io::block_on(futures::io::AsyncReadExt::read_exact(reader, &mut buf4)) {
+                match async_io::block_on(futures_lite::io::AsyncReadExt::read_exact(
+                    reader, &mut buf4,
+                )) {
                     Ok(_) => {
                         let magic = u32::from_le_bytes(buf4);
                         if magic != SKIPPABLE_FRAME_MAGIC {
                             return Ok(false);
                         }
 
-                        async_io::block_on(futures::io::AsyncReadExt::read_exact(
+                        async_io::block_on(futures_lite::io::AsyncReadExt::read_exact(
                             reader, &mut buf4,
                         ))?;
                         let skippable_size = u32::from_le_bytes(buf4);
@@ -167,13 +171,13 @@ impl<R: AsyncRead + Unpin> InnerReader<R> {
                             return Ok(false);
                         }
 
-                        async_io::block_on(futures::io::AsyncReadExt::read_exact(
+                        async_io::block_on(futures_lite::io::AsyncReadExt::read_exact(
                             reader, &mut buf4,
                         ))?;
                         let compressed_size = u32::from_le_bytes(buf4);
 
                         let mut buf2 = [0u8; 2];
-                        async_io::block_on(futures::io::AsyncReadExt::read_exact(
+                        async_io::block_on(futures_lite::io::AsyncReadExt::read_exact(
                             reader, &mut buf2,
                         ))?;
                         let brotli_magic = u16::from_le_bytes(buf2);
@@ -181,7 +185,7 @@ impl<R: AsyncRead + Unpin> InnerReader<R> {
                             return Ok(false);
                         }
 
-                        async_io::block_on(futures::io::AsyncReadExt::read_exact(
+                        async_io::block_on(futures_lite::io::AsyncReadExt::read_exact(
                             reader, &mut buf2,
                         ))?;
                         let _uncompressed_hint = u16::from_le_bytes(buf2);
@@ -199,7 +203,7 @@ impl<R: AsyncRead + Unpin> InnerReader<R> {
     }
 }
 
-impl<R: AsyncRead + Unpin> futures::io::AsyncRead for InnerReader<R> {
+impl<R: AsyncRead + Unpin> futures_lite::io::AsyncRead for InnerReader<R> {
     fn poll_read(
         mut self: std::pin::Pin<&mut Self>,
         cx: &mut std::task::Context<'_>,
@@ -266,7 +270,7 @@ enum InnerWriter<W: AsyncWrite + Unpin> {
     Standard(AsyncBrotliEncoder<W>),
     Framed {
         writer: W,
-        compressor: Option<AsyncBrotliEncoder<futures::io::Cursor<Vec<u8>>>>,
+        compressor: Option<AsyncBrotliEncoder<futures_lite::io::Cursor<Vec<u8>>>>,
         frame_size: usize,
         uncompressed_bytes_in_frame: usize,
         pending_frames: VecDeque<Vec<u8>>,
@@ -284,7 +288,7 @@ impl<W: AsyncWrite + Unpin> BrotliEncoder<W> {
             );
             InnerWriter::Standard(compressor)
         } else {
-            let cursor = futures::io::Cursor::new(Vec::with_capacity(frame_size));
+            let cursor = futures_lite::io::Cursor::new(Vec::with_capacity(frame_size));
             let compressor = Some(AsyncBrotliEncoder::with_quality(
                 cursor,
                 async_compression::Level::Precise(quality as i32),
@@ -325,7 +329,7 @@ impl<W: AsyncWrite + Unpin> BrotliEncoder<W> {
 }
 
 #[cfg(feature = "compress")]
-impl<W: AsyncWrite + Unpin> futures::io::AsyncWrite for BrotliEncoder<W> {
+impl<W: AsyncWrite + Unpin> futures_lite::io::AsyncWrite for BrotliEncoder<W> {
     fn poll_write(
         mut self: std::pin::Pin<&mut Self>,
         cx: &mut std::task::Context<'_>,
@@ -387,7 +391,7 @@ impl<W: AsyncWrite + Unpin> futures::io::AsyncWrite for BrotliEncoder<W> {
                                 pending_frames.push_back(frame);
                             }
                             let new_cursor =
-                                futures::io::Cursor::new(Vec::with_capacity(*frame_size));
+                                futures_lite::io::Cursor::new(Vec::with_capacity(*frame_size));
                             *compressor = Some(AsyncBrotliEncoder::with_quality(
                                 new_cursor,
                                 async_compression::Level::Precise(quality as i32),
@@ -418,7 +422,7 @@ impl<W: AsyncWrite + Unpin> futures::io::AsyncWrite for BrotliEncoder<W> {
                                         if !frame.is_empty() {
                                             pending_frames.push_back(frame);
                                         }
-                                        let new_cursor = futures::io::Cursor::new(
+                                        let new_cursor = futures_lite::io::Cursor::new(
                                             Vec::with_capacity(*frame_size),
                                         );
                                         *compressor = Some(AsyncBrotliEncoder::with_quality(
@@ -474,7 +478,7 @@ impl<W: AsyncWrite + Unpin> futures::io::AsyncWrite for BrotliEncoder<W> {
                                 pending_frames.push_back(frame);
                             }
                             let new_cursor =
-                                futures::io::Cursor::new(Vec::with_capacity(*frame_size));
+                                futures_lite::io::Cursor::new(Vec::with_capacity(*frame_size));
                             *compressor = Some(AsyncBrotliEncoder::with_quality(
                                 new_cursor,
                                 async_compression::Level::Precise(quality as i32),
@@ -546,7 +550,7 @@ impl<W: AsyncWrite + Unpin> futures::io::AsyncWrite for BrotliEncoder<W> {
                                 pending_frames.push_back(frame);
                             }
                             let new_cursor =
-                                futures::io::Cursor::new(Vec::with_capacity(*frame_size));
+                                futures_lite::io::Cursor::new(Vec::with_capacity(*frame_size));
                             *compressor = Some(AsyncBrotliEncoder::with_quality(
                                 new_cursor,
                                 async_compression::Level::Precise(quality as i32),

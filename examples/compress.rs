@@ -55,7 +55,7 @@ async fn main() {
 
     let now = Instant::now();
 
-    let mut writer = ArchiveWriter::new(futures::io::Cursor::new(Vec::<u8>::new()))
+    let mut writer = ArchiveWriter::new(futures_lite::io::Cursor::new(Vec::<u8>::new()))
         .await
         .unwrap_or_else(|error| panic!("Failed to create archive '{output_path}': {error}"));
 

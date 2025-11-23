@@ -6,7 +6,7 @@ mod seq_reader;
 mod source_reader;
 mod unpack_info;
 
-use futures::io::{
+use futures_lite::io::{
     AsyncRead, AsyncReadExt, AsyncSeek, AsyncSeekExt, AsyncWrite, AsyncWriteExt, SeekFrom,
 };
 use std::{cell::Cell, rc::Rc, sync::Arc};
@@ -109,12 +109,12 @@ pub struct ArchiveWriter<W: AsyncWrite + AsyncSeek + Unpin> {
 }
 
 #[cfg(not(target_arch = "wasm32"))]
-impl ArchiveWriter<futures::io::Cursor<Vec<u8>>> {
+impl ArchiveWriter<futures_lite::io::Cursor<Vec<u8>>> {
     /// 创建一个基于内存缓冲的 7z 写入器。
     ///
     /// 返回使用 `Vec<u8>` 作为底层存储的 `ArchiveWriter`，适合测试或无需落盘的场景。
     pub async fn create_in_memory() -> Result<Self> {
-        let cursor = futures::io::Cursor::new(Vec::<u8>::new());
+        let cursor = futures_lite::io::Cursor::new(Vec::<u8>::new());
         Self::new(cursor).await
     }
 }
@@ -168,7 +168,7 @@ impl<W: AsyncWrite + AsyncSeek + Unpin> ArchiveWriter<W> {
     ///     let entry = sz
     ///         .push_archive_entry(
     ///             ArchiveEntry::from_path(&src, name).await,
-    ///             Some(futures::io::Cursor::new(&b"example"[..])),
+    ///             Some(futures_lite::io::Cursor::new(&b"example"[..])),
     ///         )
     ///         .await
     ///         .expect("ok");
@@ -370,10 +370,10 @@ impl<W: AsyncWrite + AsyncSeek + Unpin> ArchiveWriter<W> {
 
     /// Finishes the compression.
     pub async fn finish(mut self) -> std::io::Result<W> {
-        let mut cursor = futures::io::Cursor::new(Vec::with_capacity(64 * 1024));
+        let mut cursor = futures_lite::io::Cursor::new(Vec::with_capacity(64 * 1024));
         self.write_encoded_header(&mut cursor).await?;
         let header = cursor.into_inner();
-        let header_pos = AsyncSeekExt::stream_position(&mut self.output).await?;
+        let header_pos = self.output.seek(SeekFrom::Current(0)).await?;
         AsyncWriteExt::write_all(&mut self.output, &header).await?;
         let crc32 = crc32fast::hash(&header);
         let mut hh = [0u8; SIGNATURE_HEADER_SIZE as usize];
@@ -408,12 +408,12 @@ impl<W: AsyncWrite + AsyncSeek + Unpin> ArchiveWriter<W> {
         &mut self,
         header: &mut H,
     ) -> std::io::Result<()> {
-        let mut raw_header_cursor = futures::io::Cursor::new(Vec::with_capacity(64 * 1024));
+        let mut raw_header_cursor = futures_lite::io::Cursor::new(Vec::with_capacity(64 * 1024));
         self.write_header(&mut raw_header_cursor).await?;
         let raw_header = raw_header_cursor.into_inner();
         let mut pack_info = PackInfo::default();
 
-        let position = AsyncSeekExt::stream_position(&mut self.output).await?;
+        let position = self.output.seek(SeekFrom::Current(0)).await?;
         let pos = position - SIGNATURE_HEADER_SIZE;
         pack_info.pos = pos;
 
@@ -435,7 +435,8 @@ impl<W: AsyncWrite + AsyncSeek + Unpin> ArchiveWriter<W> {
 
         let methods = Arc::new(methods);
 
-        let mut encoded_cursor = futures::io::Cursor::new(Vec::with_capacity(size as usize / 2));
+        let mut encoded_cursor =
+            futures_lite::io::Cursor::new(Vec::with_capacity(size as usize / 2));
 
         let mut compress_size = 0;
         let mut compressed = CompressWrapWriter::new(&mut encoded_cursor, &mut compress_size);

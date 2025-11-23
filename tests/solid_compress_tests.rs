@@ -19,7 +19,7 @@ async fn compress_multi_files_solid() {
     }
     let dest = temp_dir.path().join("folder.7z");
 
-    let mut sz = ArchiveWriter::new(futures::io::Cursor::new(Vec::<u8>::new()))
+    let mut sz = ArchiveWriter::new(futures_lite::io::Cursor::new(Vec::<u8>::new()))
         .await
         .unwrap();
     sz.push_source_path(&folder, |_| async { true })
@@ -63,7 +63,7 @@ async fn compress_multi_files_mix_solid_and_non_solid() {
     }
     let dest = temp_dir.path().join("folder.7z");
 
-    let mut sz = ArchiveWriter::new(futures::io::Cursor::new(Vec::<u8>::new()))
+    let mut sz = ArchiveWriter::new(futures_lite::io::Cursor::new(Vec::<u8>::new()))
         .await
         .unwrap();
 
@@ -84,7 +84,7 @@ async fn compress_multi_files_mix_solid_and_non_solid() {
         let data = async_fs::read(&src).await.unwrap();
         sz.push_archive_entry(
             ArchiveEntry::from_path(&src, name).await,
-            Some(futures::io::Cursor::new(data)),
+            Some(futures_lite::io::Cursor::new(data)),
         )
         .await
         .expect("ok");

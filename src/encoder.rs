@@ -42,7 +42,7 @@ use async_compression::futures::write::DeflateEncoder as AsyncDeflateEncoder;
 use async_compression::futures::write::LzmaEncoder as AsyncLzmaEncoder;
 #[cfg(feature = "zstd")]
 use async_compression::futures::write::ZstdEncoder as AsyncZstdEncoder;
-use futures::io::{AsyncWrite, AsyncWriteExt};
+use futures_lite::io::{AsyncWrite, AsyncWriteExt};
 
 pub(crate) enum Encoder<W: AsyncWrite + Unpin> {
     Copy(CountingWriter<W>),

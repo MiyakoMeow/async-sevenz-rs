@@ -10,7 +10,7 @@ async fn main() {
         .await
         .unwrap();
     let data = afs::read("examples/data/sample.7z").await.unwrap();
-    let mut cursor = futures::io::Cursor::new(data);
+    let mut cursor = futures_lite::io::Cursor::new(data);
     let block_count = archive.blocks.len();
     let my_file_name = "7zFormat.txt";
 
@@ -38,7 +38,7 @@ async fn main() {
                 } else {
                     Box::pin(async move {
                         let mut buf = Vec::new();
-                        futures::io::AsyncReadExt::read_to_end(reader, &mut buf).await?;
+                        futures_lite::io::AsyncReadExt::read_to_end(reader, &mut buf).await?;
                         Ok(true)
                     })
                 }

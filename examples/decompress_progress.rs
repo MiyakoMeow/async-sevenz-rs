@@ -1,6 +1,6 @@
 use async_fs as afs;
 use async_sevenz::Password;
-use futures::io::{AsyncReadExt, Cursor};
+use futures_lite::io::{AsyncReadExt, Cursor};
 use std::path::PathBuf;
 
 #[tokio::main]

@@ -1,5 +1,5 @@
 use async_io::block_on;
-use futures::io::{AsyncRead, AsyncReadExt, AsyncSeek, AsyncSeekExt, AsyncWrite, SeekFrom};
+use futures_lite::io::{AsyncRead, AsyncReadExt, AsyncSeek, AsyncSeekExt, AsyncWrite, SeekFrom};
 
 use js_sys::*;
 use wasm_bindgen::prelude::*;
@@ -21,11 +21,14 @@ use crate::*;
 #[wasm_bindgen]
 pub fn decompress(src: Uint8Array, pwd: &str, f: &Function) -> Result<(), String> {
     let mut src_reader = Uint8ArrayStream::new(src);
-    let pos =
-        block_on(AsyncSeekExt::stream_position(&mut src_reader)).map_err(|e| e.to_string())?;
+    let pos = block_on(AsyncSeekExt::seek(
+        &mut src_reader,
+        futures_lite::io::SeekFrom::Current(0),
+    ))
+    .map_err(|e| e.to_string())?;
     block_on(AsyncSeekExt::seek(
         &mut src_reader,
-        futures::io::SeekFrom::Start(pos),
+        futures_lite::io::SeekFrom::Start(pos),
     ))
     .map_err(|e| e.to_string())?;
     let mut seven =
@@ -121,13 +124,13 @@ impl AsyncSeek for Uint8ArrayStream {
     fn poll_seek(
         mut self: std::pin::Pin<&mut Self>,
         _cx: &mut std::task::Context<'_>,
-        pos: futures::io::SeekFrom,
+        pos: futures_lite::io::SeekFrom,
     ) -> std::task::Poll<std::io::Result<u64>> {
         match pos {
-            futures::io::SeekFrom::Start(n) => {
+            futures_lite::io::SeekFrom::Start(n) => {
                 self.pos = n as usize;
             }
-            futures::io::SeekFrom::End(i) => {
+            futures_lite::io::SeekFrom::End(i) => {
                 let posi = self.data.length() as i64 + i;
                 if posi < 0 {
                     self.pos = 0;
@@ -137,7 +140,7 @@ impl AsyncSeek for Uint8ArrayStream {
                     self.pos = posi as usize;
                 }
             }
-            futures::io::SeekFrom::Current(i) => {
+            futures_lite::io::SeekFrom::Current(i) => {
                 if i != 0 {
                     let posi = self.pos as i64 + i;
                     if posi < 0 {

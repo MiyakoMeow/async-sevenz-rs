@@ -1,4 +1,4 @@
-use futures::io::Cursor;
+use futures_lite::io::Cursor;
 #[cfg(feature = "compress")]
 use std::collections::VecDeque;
 
@@ -6,8 +6,8 @@ use crate::Error;
 use async_compression::futures::bufread::Lz4Decoder as AsyncLz4Decoder;
 #[cfg(feature = "compress")]
 use async_compression::futures::write::Lz4Encoder as AsyncLz4Encoder;
-use futures::io::BufReader as AsyncBufReader;
-use futures::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
+use futures_lite::io::BufReader as AsyncBufReader;
+use futures_lite::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 
 /// Magic bytes of a skippable frame as used in LZ4 by zstdmt.
 const SKIPPABLE_FRAME_MAGIC: u32 = 0x184D2A50;
@@ -52,7 +52,7 @@ impl<R: AsyncRead + Unpin> Lz4Decoder<R> {
     }
 }
 
-impl<R: AsyncRead + Unpin> futures::io::AsyncRead for Lz4Decoder<R> {
+impl<R: AsyncRead + Unpin> futures_lite::io::AsyncRead for Lz4Decoder<R> {
     fn poll_read(
         mut self: std::pin::Pin<&mut Self>,
         cx: &mut std::task::Context<'_>,
@@ -164,7 +164,7 @@ impl<R: AsyncRead + Unpin> InnerReader<R> {
     }
 }
 
-impl<R: AsyncRead + Unpin> futures::io::AsyncRead for InnerReader<R> {
+impl<R: AsyncRead + Unpin> futures_lite::io::AsyncRead for InnerReader<R> {
     fn poll_read(
         mut self: std::pin::Pin<&mut Self>,
         cx: &mut std::task::Context<'_>,
@@ -230,7 +230,7 @@ enum InnerWriter<W: AsyncWrite + Unpin> {
     Standard(AsyncLz4Encoder<W>),
     Framed {
         writer: W,
-        compressor: Option<AsyncLz4Encoder<futures::io::Cursor<Vec<u8>>>>,
+        compressor: Option<AsyncLz4Encoder<futures_lite::io::Cursor<Vec<u8>>>>,
         frame_size: usize,
         uncompressed_bytes_in_frame: usize,
         pending_frames: VecDeque<Vec<u8>>,
@@ -245,7 +245,7 @@ impl<W: AsyncWrite + Unpin> Lz4Encoder<W> {
             let encoder = AsyncLz4Encoder::new(writer);
             InnerWriter::Standard(encoder)
         } else {
-            let cursor = futures::io::Cursor::new(Vec::with_capacity(frame_size));
+            let cursor = futures_lite::io::Cursor::new(Vec::with_capacity(frame_size));
             let compressor = Some(AsyncLz4Encoder::new(cursor));
             InnerWriter::Framed {
                 writer,
@@ -305,7 +305,7 @@ impl<W: AsyncWrite + Unpin> Lz4Encoder<W> {
 }
 
 #[cfg(feature = "compress")]
-impl<W: AsyncWrite + Unpin> futures::io::AsyncWrite for Lz4Encoder<W> {
+impl<W: AsyncWrite + Unpin> futures_lite::io::AsyncWrite for Lz4Encoder<W> {
     fn poll_write(
         mut self: std::pin::Pin<&mut Self>,
         cx: &mut std::task::Context<'_>,
@@ -365,7 +365,7 @@ impl<W: AsyncWrite + Unpin> futures::io::AsyncWrite for Lz4Encoder<W> {
                                 pending_frames.push_back(frame);
                             }
                             let new_cursor =
-                                futures::io::Cursor::new(Vec::with_capacity(*frame_size));
+                                futures_lite::io::Cursor::new(Vec::with_capacity(*frame_size));
                             *compressor = Some(AsyncLz4Encoder::new(new_cursor));
                             *uncompressed_bytes_in_frame = 0;
                             std::task::Poll::Pending
@@ -390,7 +390,7 @@ impl<W: AsyncWrite + Unpin> futures::io::AsyncWrite for Lz4Encoder<W> {
                                         if !frame.is_empty() {
                                             pending_frames.push_back(frame);
                                         }
-                                        let new_cursor = futures::io::Cursor::new(
+                                        let new_cursor = futures_lite::io::Cursor::new(
                                             Vec::with_capacity(*frame_size),
                                         );
                                         *compressor = Some(AsyncLz4Encoder::new(new_cursor));
@@ -441,7 +441,7 @@ impl<W: AsyncWrite + Unpin> futures::io::AsyncWrite for Lz4Encoder<W> {
                                 pending_frames.push_back(frame);
                             }
                             let new_cursor =
-                                futures::io::Cursor::new(Vec::with_capacity(*frame_size));
+                                futures_lite::io::Cursor::new(Vec::with_capacity(*frame_size));
                             *compressor = Some(AsyncLz4Encoder::new(new_cursor));
                             *uncompressed_bytes_in_frame = 0;
                         }
@@ -508,7 +508,7 @@ impl<W: AsyncWrite + Unpin> futures::io::AsyncWrite for Lz4Encoder<W> {
                                 pending_frames.push_back(frame);
                             }
                             let new_cursor =
-                                futures::io::Cursor::new(Vec::with_capacity(*frame_size));
+                                futures_lite::io::Cursor::new(Vec::with_capacity(*frame_size));
                             *compressor = Some(AsyncLz4Encoder::new(new_cursor));
                             *uncompressed_bytes_in_frame = 0;
                         }

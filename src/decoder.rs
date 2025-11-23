@@ -10,7 +10,7 @@ use async_compression::futures::bufread::DeflateDecoder as AsyncDeflateDecoder;
 use async_compression::futures::bufread::LzmaDecoder as AsyncLzmaDecoder;
 #[cfg(feature = "zstd")]
 use async_compression::futures::bufread::ZstdDecoder as AsyncZstdDecoder;
-use futures::io::{AsyncRead, AsyncReadExt, BufReader, Cursor};
+use futures_lite::io::{AsyncRead, AsyncReadExt, BufReader, Cursor};
 use lzma_rust2::{
     Lzma2Reader, Lzma2ReaderMt,
     filter::{bcj::BcjReader, delta::DeltaReader},
@@ -32,7 +32,7 @@ use crate::{
     util::decompress::AsyncReadSeekAsStd,
 };
 
-type LzmaBuf<R> = BufReader<futures::io::Chain<Cursor<Vec<u8>>, R>>;
+type LzmaBuf<R> = BufReader<futures_lite::io::Chain<Cursor<Vec<u8>>, R>>;
 
 /// 归档数据解码器枚举，根据编码方法选择相应的异步解码器。
 ///

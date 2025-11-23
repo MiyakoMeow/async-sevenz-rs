@@ -1,4 +1,4 @@
-use futures::io::AsyncRead;
+use futures_lite::io::AsyncRead;
 use std::ops::Deref;
 
 pub(crate) struct SeqReader<R> {
