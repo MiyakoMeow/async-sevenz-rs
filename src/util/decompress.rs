@@ -72,10 +72,12 @@ pub async fn decompress_file_with_extract_fn(
     dest: impl AsRef<Path>,
     mut extract_fn: impl for<'a> FnMut(
         &'a ArchiveEntry,
-        &'a mut (dyn futures::io::AsyncRead + Unpin + 'a),
+        &'a mut (dyn futures::io::AsyncRead + Unpin + Send + 'a),
         &'a Path,
-    ) -> Pin<Box<dyn Future<Output = Result<bool, Error>> + 'a>>
-    + 'static,
+    )
+        -> Pin<Box<dyn Future<Output = Result<bool, Error>> + Send + 'a>>
+    + 'static
+    + Send,
 ) -> Result<(), Error> {
     decompress_path_impl(
         src_path.as_ref(),
@@ -91,7 +93,7 @@ pub async fn decompress_file_with_extract_fn(
 /// # Arguments
 /// * `src_reader` - Reader containing the archive data
 /// * `dest` - Path to the destination directory where files will be extracted
-pub async fn decompress<R: AsyncRead + AsyncSeek + Unpin>(
+pub async fn decompress<R: AsyncRead + AsyncSeek + Unpin + Send>(
     mut src_reader: R,
     dest: impl AsRef<Path>,
 ) -> Result<(), Error> {
@@ -115,15 +117,17 @@ pub async fn decompress<R: AsyncRead + AsyncSeek + Unpin>(
 /// * `dest` - Path to the destination directory where files will be extracted
 /// * `extract_fn` - Custom function to handle each archive entry during extraction
 #[cfg(not(target_arch = "wasm32"))]
-pub async fn decompress_with_extract_fn<R: AsyncRead + AsyncSeek + Unpin>(
+pub async fn decompress_with_extract_fn<R: AsyncRead + AsyncSeek + Unpin + Send>(
     mut src_reader: R,
     dest: impl AsRef<Path>,
     extract_fn: impl for<'a> FnMut(
         &'a ArchiveEntry,
-        &'a mut (dyn futures::io::AsyncRead + Unpin + 'a),
+        &'a mut (dyn futures::io::AsyncRead + Unpin + Send + 'a),
         &'a Path,
-    ) -> Pin<Box<dyn Future<Output = Result<bool, Error>> + 'a>>
-    + 'static,
+    )
+        -> Pin<Box<dyn Future<Output = Result<bool, Error>> + Send + 'a>>
+    + 'static
+    + Send,
 ) -> Result<(), Error> {
     let pos = AsyncSeekExt::stream_position(&mut src_reader).await?;
     AsyncSeekExt::seek(&mut src_reader, futures::io::SeekFrom::Start(pos)).await?;
@@ -159,7 +163,7 @@ pub async fn decompress_file_with_password(
 /// * `dest` - Path to the destination directory where files will be extracted
 /// * `password` - Password to decrypt the archive
 #[cfg(all(feature = "aes256", not(target_arch = "wasm32")))]
-pub async fn decompress_with_password<R: AsyncRead + AsyncSeek + Unpin>(
+pub async fn decompress_with_password<R: AsyncRead + AsyncSeek + Unpin + Send>(
     mut src_reader: R,
     dest: impl AsRef<Path>,
     password: Password,
@@ -183,16 +187,18 @@ pub async fn decompress_with_password<R: AsyncRead + AsyncSeek + Unpin>(
 /// * `password` - Password to decrypt the archive
 /// * `extract_fn` - Custom function to handle each archive entry during extraction
 #[cfg(all(feature = "aes256", not(target_arch = "wasm32")))]
-pub async fn decompress_with_extract_fn_and_password<R: AsyncRead + AsyncSeek + Unpin>(
+pub async fn decompress_with_extract_fn_and_password<R: AsyncRead + AsyncSeek + Unpin + Send>(
     mut src_reader: R,
     dest: impl AsRef<Path>,
     password: Password,
     extract_fn: impl for<'a> FnMut(
         &'a ArchiveEntry,
-        &'a mut (dyn futures::io::AsyncRead + Unpin + 'a),
+        &'a mut (dyn futures::io::AsyncRead + Unpin + Send + 'a),
         &'a Path,
-    ) -> Pin<Box<dyn Future<Output = Result<bool, Error>> + 'a>>
-    + 'static,
+    )
+        -> Pin<Box<dyn Future<Output = Result<bool, Error>> + Send + 'a>>
+    + 'static
+    + Send,
 ) -> Result<(), Error> {
     let pos = AsyncSeekExt::stream_position(&mut src_reader).await?;
     AsyncSeekExt::seek(&mut src_reader, futures::io::SeekFrom::Start(pos)).await?;
@@ -200,16 +206,18 @@ pub async fn decompress_with_extract_fn_and_password<R: AsyncRead + AsyncSeek + 
 }
 
 #[cfg(not(target_arch = "wasm32"))]
-async fn decompress_impl<R: AsyncRead + AsyncSeek + Unpin>(
+async fn decompress_impl<R: AsyncRead + AsyncSeek + Unpin + Send>(
     mut src_reader: R,
     dest: impl AsRef<Path>,
     password: Password,
     extract_fn: impl for<'a> FnMut(
         &'a ArchiveEntry,
-        &'a mut (dyn futures::io::AsyncRead + Unpin + 'a),
+        &'a mut (dyn futures::io::AsyncRead + Unpin + Send + 'a),
         &'a Path,
-    ) -> Pin<Box<dyn Future<Output = Result<bool, Error>> + 'a>>
-    + 'static,
+    )
+        -> Pin<Box<dyn Future<Output = Result<bool, Error>> + Send + 'a>>
+    + 'static
+    + Send,
 ) -> Result<(), Error> {
     let pos = AsyncSeekExt::stream_position(&mut src_reader).await?;
     AsyncSeekExt::seek(&mut src_reader, futures::io::SeekFrom::Start(pos)).await?;
@@ -218,14 +226,14 @@ async fn decompress_impl<R: AsyncRead + AsyncSeek + Unpin>(
     if !dest.exists() {
         afs::create_dir_all(&dest).await?;
     }
-    let extract_fn_cell = std::rc::Rc::new(std::cell::RefCell::new(extract_fn));
+    let extract_fn_cell = std::sync::Arc::new(std::sync::Mutex::new(extract_fn));
     seven
         .for_each_entries(|entry, reader| {
             let dest_path = dest.join(entry.name());
-            let extract_fn_cell = std::rc::Rc::clone(&extract_fn_cell);
+            let extract_fn_cell = std::sync::Arc::clone(&extract_fn_cell);
             Box::pin(async move {
                 let fut = {
-                    let mut f = extract_fn_cell.borrow_mut();
+                    let mut f = extract_fn_cell.lock().unwrap();
                     f(entry, reader, dest_path.as_path())
                 };
                 fut.await
@@ -243,23 +251,25 @@ async fn decompress_path_impl(
     password: Password,
     extract_fn: impl for<'a> FnMut(
         &'a ArchiveEntry,
-        &'a mut (dyn futures::io::AsyncRead + Unpin + 'a),
+        &'a mut (dyn futures::io::AsyncRead + Unpin + Send + 'a),
         &'a Path,
-    ) -> Pin<Box<dyn Future<Output = Result<bool, Error>> + 'a>>
-    + 'static,
+    )
+        -> Pin<Box<dyn Future<Output = Result<bool, Error>> + Send + 'a>>
+    + 'static
+    + Send,
 ) -> Result<(), Error> {
     let mut seven = ArchiveReader::open(src_path, password).await?;
     if !dest.exists() {
         afs::create_dir_all(&dest).await?;
     }
-    let extract_fn_cell = std::rc::Rc::new(std::cell::RefCell::new(extract_fn));
+    let extract_fn_cell = std::sync::Arc::new(std::sync::Mutex::new(extract_fn));
     seven
         .for_each_entries(|entry, reader| {
             let dest_path = dest.join(entry.name());
-            let extract_fn_cell = std::rc::Rc::clone(&extract_fn_cell);
+            let extract_fn_cell = std::sync::Arc::clone(&extract_fn_cell);
             Box::pin(async move {
                 let fut = {
-                    let mut f = extract_fn_cell.borrow_mut();
+                    let mut f = extract_fn_cell.lock().unwrap();
                     f(entry, reader, dest_path.as_path())
                 };
                 fut.await
@@ -278,7 +288,7 @@ async fn decompress_path_impl(
 #[cfg(not(target_arch = "wasm32"))]
 pub async fn default_entry_extract_fn(
     entry: &ArchiveEntry,
-    reader: &mut (dyn futures::io::AsyncRead + Unpin),
+    reader: &mut (dyn futures::io::AsyncRead + Unpin + Send),
     dest: &Path,
 ) -> Result<bool, Error> {
     if entry.is_directory() {

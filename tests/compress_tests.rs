@@ -8,108 +8,118 @@ use std::hash::{Hash, Hasher};
 use tempfile::*;
 
 #[cfg(feature = "compress")]
-#[test]
-fn compress_empty_file() {
+#[tokio::test]
+async fn compress_empty_file() {
     let temp_dir = tempdir().unwrap();
     let source = temp_dir.path().join("empty.txt");
-    smol::block_on(async_fs::write(&source, &[])).unwrap();
+    async_fs::write(&source, &[]).await.unwrap();
     let dest = temp_dir.path().join("empty.7z");
-    smol::block_on(compress_to_path(source, &dest)).expect("compress ok");
+    compress_to_path(source, &dest).await.expect("compress ok");
 
     let decompress_dest = temp_dir.path().join("decompress");
-    smol::block_on(decompress_file(dest, &decompress_dest)).expect("decompress ok");
+    decompress_file(dest, &decompress_dest)
+        .await
+        .expect("decompress ok");
     assert!(decompress_dest.exists());
     let decompress_file = decompress_dest.join("empty.txt");
     assert!(decompress_file.exists());
 
     assert_eq!(
-        smol::block_on(async_fs::read_to_string(&decompress_file)).unwrap(),
+        async_fs::read_to_string(&decompress_file).await.unwrap(),
         ""
     );
 }
 
 #[cfg(feature = "compress")]
-#[test]
-fn compress_one_file_with_content() {
+#[tokio::test]
+async fn compress_one_file_with_content() {
     let temp_dir = tempdir().unwrap();
     let source = temp_dir.path().join("file1.txt");
-    smol::block_on(async_fs::write(&source, "file1 with content")).unwrap();
+    async_fs::write(&source, "file1 with content")
+        .await
+        .unwrap();
     let dest = temp_dir.path().join("file1.7z");
-    smol::block_on(compress_to_path(source, &dest)).expect("compress ok");
+    compress_to_path(source, &dest).await.expect("compress ok");
 
     let decompress_dest = temp_dir.path().join("decompress");
-    smol::block_on(decompress_file(dest, &decompress_dest)).expect("decompress ok");
+    decompress_file(dest, &decompress_dest)
+        .await
+        .expect("decompress ok");
     assert!(decompress_dest.exists());
     let decompress_file = decompress_dest.join("file1.txt");
     assert!(decompress_file.exists());
 
     assert_eq!(
-        smol::block_on(async_fs::read_to_string(&decompress_file)).unwrap(),
+        async_fs::read_to_string(&decompress_file).await.unwrap(),
         "file1 with content"
     );
 }
 
 #[cfg(feature = "compress")]
-#[test]
-fn compress_empty_folder() {
+#[tokio::test]
+async fn compress_empty_folder() {
     let temp_dir = tempdir().unwrap();
     let folder = temp_dir.path().join("folder");
-    smol::block_on(async_fs::create_dir(&folder)).unwrap();
+    async_fs::create_dir(&folder).await.unwrap();
     let dest = temp_dir.path().join("folder.7z");
-    smol::block_on(compress_to_path(&folder, &dest)).expect("compress ok");
+    compress_to_path(&folder, &dest).await.expect("compress ok");
 
     let decompress_dest = temp_dir.path().join("decompress");
-    smol::block_on(decompress_file(dest, &decompress_dest)).expect("decompress ok");
+    decompress_file(dest, &decompress_dest)
+        .await
+        .expect("decompress ok");
     assert!(decompress_dest.exists());
     assert!(decompress_dest.read_dir().unwrap().next().is_none());
 }
 
 #[cfg(feature = "compress")]
-#[test]
-fn compress_folder_with_one_file() {
+#[tokio::test]
+async fn compress_folder_with_one_file() {
     let temp_dir = tempdir().unwrap();
     let folder = temp_dir.path().join("folder");
-    smol::block_on(async_fs::create_dir(&folder)).unwrap();
-    smol::block_on(async_fs::write(
-        folder.join("file1.txt"),
-        "file1 with content",
-    ))
-    .unwrap();
+    async_fs::create_dir(&folder).await.unwrap();
+    async_fs::write(folder.join("file1.txt"), "file1 with content")
+        .await
+        .unwrap();
     let dest = temp_dir.path().join("folder.7z");
-    smol::block_on(compress_to_path(&folder, &dest)).expect("compress ok");
+    compress_to_path(&folder, &dest).await.expect("compress ok");
 
     let decompress_dest = temp_dir.path().join("decompress");
-    smol::block_on(decompress_file(dest, &decompress_dest)).expect("decompress ok");
+    decompress_file(dest, &decompress_dest)
+        .await
+        .expect("decompress ok");
     assert!(decompress_dest.exists());
     let decompress_file = decompress_dest.join("file1.txt");
     assert!(decompress_file.exists());
 
     assert_eq!(
-        smol::block_on(async_fs::read_to_string(&decompress_file)).unwrap(),
+        async_fs::read_to_string(&decompress_file).await.unwrap(),
         "file1 with content"
     );
 }
 
 #[cfg(feature = "compress")]
-#[test]
-fn compress_folder_with_multi_file() {
+#[tokio::test]
+async fn compress_folder_with_multi_file() {
     let temp_dir = tempdir().unwrap();
     let folder = temp_dir.path().join("folder");
-    smol::block_on(async_fs::create_dir(&folder)).unwrap();
+    async_fs::create_dir(&folder).await.unwrap();
     let mut files = Vec::with_capacity(100);
     let mut contents = Vec::with_capacity(100);
     for i in 1..=100 {
         let name = format!("file{i}.txt");
         let content = format!("file{i} with content");
-        smol::block_on(async_fs::write(folder.join(&name), &content)).unwrap();
+        async_fs::write(folder.join(&name), &content).await.unwrap();
         files.push(name);
         contents.push(content);
     }
     let dest = temp_dir.path().join("folder.7z");
-    smol::block_on(compress_to_path(&folder, &dest)).expect("compress ok");
+    compress_to_path(&folder, &dest).await.expect("compress ok");
 
     let decompress_dest = temp_dir.path().join("decompress");
-    smol::block_on(decompress_file(dest, &decompress_dest)).expect("decompress ok");
+    decompress_file(dest, &decompress_dest)
+        .await
+        .expect("decompress ok");
     assert!(decompress_dest.exists());
     for i in 0..files.len() {
         let name = &files[i];
@@ -117,42 +127,42 @@ fn compress_folder_with_multi_file() {
         let decompress_file = decompress_dest.join(name);
         assert!(decompress_file.exists());
         assert_eq!(
-            &smol::block_on(async_fs::read_to_string(&decompress_file)).unwrap(),
+            &async_fs::read_to_string(&decompress_file).await.unwrap(),
             content
         );
     }
 }
 
 #[cfg(feature = "compress")]
-#[test]
-fn compress_folder_with_nested_folder() {
+#[tokio::test]
+async fn compress_folder_with_nested_folder() {
     let temp_dir = tempdir().unwrap();
     let folder = temp_dir.path().join("folder");
     let inner = folder.join("a/b/c");
-    smol::block_on(async_fs::create_dir_all(&inner)).unwrap();
-    smol::block_on(async_fs::write(
-        inner.join("file1.txt"),
-        "file1 with content",
-    ))
-    .unwrap();
+    async_fs::create_dir_all(&inner).await.unwrap();
+    async_fs::write(inner.join("file1.txt"), "file1 with content")
+        .await
+        .unwrap();
     let dest = temp_dir.path().join("folder.7z");
-    smol::block_on(compress_to_path(&folder, &dest)).expect("compress ok");
+    compress_to_path(&folder, &dest).await.expect("compress ok");
 
     let decompress_dest = temp_dir.path().join("decompress");
-    smol::block_on(decompress_file(dest, &decompress_dest)).expect("decompress ok");
+    decompress_file(dest, &decompress_dest)
+        .await
+        .expect("decompress ok");
     assert!(decompress_dest.exists());
     let decompress_file = decompress_dest.join("a/b/c/file1.txt");
     assert!(decompress_file.exists());
 
     assert_eq!(
-        smol::block_on(async_fs::read_to_string(&decompress_file)).unwrap(),
+        async_fs::read_to_string(&decompress_file).await.unwrap(),
         "file1 with content"
     );
 }
 
 #[cfg(all(feature = "compress", feature = "aes256"))]
-#[test]
-fn compress_one_file_with_random_content_encrypted() {
+#[tokio::test]
+async fn compress_one_file_with_random_content_encrypted() {
     use rand::Rng;
     for _ in 0..10 {
         let temp_dir = tempdir().unwrap();
@@ -164,61 +174,59 @@ fn compress_one_file_with_random_content_encrypted() {
             let c = rng.random_range(' '..'~');
             content.push(c);
         }
-        smol::block_on(async_fs::write(&source, &content)).unwrap();
+        async_fs::write(&source, &content).await.unwrap();
         let dest = temp_dir.path().join("file1.7z");
 
-        smol::block_on(compress_to_path_encrypted(source, &dest, "rust".into()))
+        compress_to_path_encrypted(source, &dest, "rust".into())
+            .await
             .expect("compress ok");
 
         let decompress_dest = temp_dir.path().join("decompress");
-        smol::block_on(decompress_file_with_password(
-            dest,
-            &decompress_dest,
-            "rust".into(),
-        ))
-        .expect("decompress ok");
+        decompress_file_with_password(dest, &decompress_dest, "rust".into())
+            .await
+            .expect("decompress ok");
         assert!(decompress_dest.exists());
         let decompress_file = decompress_dest.join("file1.txt");
         assert!(decompress_file.exists());
 
         assert_eq!(
-            smol::block_on(async_fs::read_to_string(&decompress_file)).unwrap(),
+            async_fs::read_to_string(&decompress_file).await.unwrap(),
             content
         );
     }
 }
 
 #[cfg(feature = "compress")]
-fn test_compression_method(methods: &[EncoderConfiguration]) {
-    let content = smol::block_on(async_fs::read("tests/resources/decompress_x86.exe")).unwrap();
+async fn test_compression_method(methods: &[EncoderConfiguration]) {
+    let content = async_fs::read("tests/resources/decompress_x86.exe")
+        .await
+        .unwrap();
 
     let bytes: Vec<u8>;
 
     {
-        let mut writer = smol::block_on(ArchiveWriter::new(futures::io::Cursor::new(
-            Vec::<u8>::new(),
-        )))
-        .unwrap();
+        let mut writer = ArchiveWriter::new(futures::io::Cursor::new(Vec::<u8>::new()))
+            .await
+            .unwrap();
         let file = ArchiveEntry::new_file("data/decompress_x86.exe");
         let directory = ArchiveEntry::new_directory("data");
 
         writer.set_content_methods(methods.to_vec());
-        smol::block_on(async {
-            writer
-                .push_archive_entry(file, Some(content.as_slice()))
-                .await
-                .unwrap();
-            writer
-                .push_archive_entry::<&[u8]>(directory, None)
-                .await
-                .unwrap();
-        });
-        let cursor = smol::block_on(writer.finish()).unwrap();
+        writer
+            .push_archive_entry(file, Some(content.as_slice()))
+            .await
+            .unwrap();
+        writer
+            .push_archive_entry::<&[u8]>(directory, None)
+            .await
+            .unwrap();
+        let cursor = writer.finish().await.unwrap();
         bytes = cursor.into_inner();
     }
 
-    let mut reader =
-        smol::block_on(ArchiveReader::open_from_bytes(bytes, Password::empty())).unwrap();
+    let mut reader = ArchiveReader::open_from_bytes(bytes, Password::empty())
+        .await
+        .unwrap();
 
     assert_eq!(reader.archive().files.len(), 2);
 
@@ -253,7 +261,7 @@ fn test_compression_method(methods: &[EncoderConfiguration]) {
             .any(|file| file.name() == "data/decompress_x86.exe")
     );
 
-    let data = smol::block_on(reader.read_file("data/decompress_x86.exe")).unwrap();
+    let data = reader.read_file("data/decompress_x86.exe").await.unwrap();
 
     fn hash(data: &[u8]) -> u64 {
         let mut hasher = std::collections::hash_map::DefaultHasher::new();
@@ -265,165 +273,177 @@ fn test_compression_method(methods: &[EncoderConfiguration]) {
 }
 
 #[cfg(feature = "compress")]
-#[test]
-fn compress_with_copy_algorithm() {
-    test_compression_method(&[EncoderMethod::COPY.into()]);
+#[tokio::test]
+async fn compress_with_copy_algorithm() {
+    test_compression_method(&[EncoderMethod::COPY.into()]).await;
 }
 
 #[cfg(feature = "compress")]
-#[test]
-fn compress_with_delta_lzma_algorithm() {
+#[tokio::test]
+async fn compress_with_delta_lzma_algorithm() {
     for i in 1..=4 {
         test_compression_method(&[
             EncoderMethod::LZMA.into(),
             DeltaOptions::from_distance(i).into(),
-        ]);
+        ])
+        .await;
     }
 }
 
 #[cfg(feature = "compress")]
-#[test]
-fn compress_with_delta_lzma2_algorithm() {
+#[tokio::test]
+async fn compress_with_delta_lzma2_algorithm() {
     for i in 1..=4 {
         test_compression_method(&[
             EncoderMethod::LZMA2.into(),
             DeltaOptions::from_distance(i).into(),
-        ]);
+        ])
+        .await;
     }
 }
 
 #[cfg(feature = "compress")]
-#[test]
-fn compress_with_bcj_x86_lzma2_algorithm() {
+#[tokio::test]
+async fn compress_with_bcj_x86_lzma2_algorithm() {
     test_compression_method(&[
         EncoderMethod::LZMA2.into(),
         EncoderMethod::BCJ_X86_FILTER.into(),
-    ]);
+    ])
+    .await;
 }
 
 #[cfg(feature = "compress")]
-#[test]
-fn compress_with_bcj_arm_lzma2_algorithm() {
+#[tokio::test]
+async fn compress_with_bcj_arm_lzma2_algorithm() {
     test_compression_method(&[
         EncoderMethod::LZMA2.into(),
         EncoderMethod::BCJ_ARM_FILTER.into(),
-    ]);
+    ])
+    .await;
 }
 
 #[cfg(feature = "compress")]
-#[test]
-fn compress_with_bcj_arm64_lzma2_algorithm() {
+#[tokio::test]
+async fn compress_with_bcj_arm64_lzma2_algorithm() {
     test_compression_method(&[
         EncoderMethod::LZMA2.into(),
         EncoderMethod::BCJ_ARM64_FILTER.into(),
-    ]);
+    ])
+    .await;
 }
 
 #[cfg(feature = "compress")]
-#[test]
-fn compress_with_bcj_arm_thumb_lzma2_algorithm() {
+#[tokio::test]
+async fn compress_with_bcj_arm_thumb_lzma2_algorithm() {
     test_compression_method(&[
         EncoderMethod::LZMA2.into(),
         EncoderMethod::BCJ_ARM_THUMB_FILTER.into(),
-    ]);
+    ])
+    .await;
 }
 
 #[cfg(feature = "compress")]
-#[test]
-fn compress_with_bcj_ia64_lzma2_algorithm() {
+#[tokio::test]
+async fn compress_with_bcj_ia64_lzma2_algorithm() {
     test_compression_method(&[
         EncoderMethod::LZMA2.into(),
         EncoderMethod::BCJ_IA64_FILTER.into(),
-    ]);
+    ])
+    .await;
 }
 
 #[cfg(feature = "compress")]
-#[test]
-fn compress_with_bcj_sparc_lzma2_algorithm() {
+#[tokio::test]
+async fn compress_with_bcj_sparc_lzma2_algorithm() {
     test_compression_method(&[
         EncoderMethod::LZMA2.into(),
         EncoderMethod::BCJ_SPARC_FILTER.into(),
-    ]);
+    ])
+    .await;
 }
 
 #[cfg(feature = "compress")]
-#[test]
-fn compress_with_bcj_ppc_lzma2_algorithm() {
+#[tokio::test]
+async fn compress_with_bcj_ppc_lzma2_algorithm() {
     test_compression_method(&[
         EncoderMethod::LZMA2.into(),
         EncoderMethod::BCJ_PPC_FILTER.into(),
-    ]);
+    ])
+    .await;
 }
 
 #[cfg(feature = "compress")]
-#[test]
-fn compress_with_bcj_riscv_lzma2_algorithm() {
+#[tokio::test]
+async fn compress_with_bcj_riscv_lzma2_algorithm() {
     test_compression_method(&[
         EncoderMethod::LZMA2.into(),
         EncoderMethod::BCJ_RISCV_FILTER.into(),
-    ]);
+    ])
+    .await;
 }
 
 #[cfg(feature = "compress")]
-#[test]
-fn compress_with_lzma_algorithm() {
-    test_compression_method(&[EncoderMethod::LZMA.into()]);
+#[tokio::test]
+async fn compress_with_lzma_algorithm() {
+    test_compression_method(&[EncoderMethod::LZMA.into()]).await;
 }
 
 #[cfg(feature = "compress")]
-#[test]
-fn compress_with_lzma2_algorithm() {
-    test_compression_method(&[EncoderMethod::LZMA2.into()]);
+#[tokio::test]
+async fn compress_with_lzma2_algorithm() {
+    test_compression_method(&[EncoderMethod::LZMA2.into()]).await;
 }
 
 #[cfg(all(feature = "compress", feature = "ppmd"))]
-#[test]
-fn compress_with_ppmd_algorithm() {
-    test_compression_method(&[EncoderMethod::PPMD.into()]);
+#[tokio::test]
+async fn compress_with_ppmd_algorithm() {
+    test_compression_method(&[EncoderMethod::PPMD.into()]).await;
 }
 
 #[cfg(all(feature = "compress", feature = "brotli"))]
-#[test]
-fn compress_with_brotli_standard_algorithm() {
-    test_compression_method(&[BrotliOptions::default().with_skippable_frame_size(0).into()]);
+#[tokio::test]
+async fn compress_with_brotli_standard_algorithm() {
+    test_compression_method(&[BrotliOptions::default().with_skippable_frame_size(0).into()]).await;
 }
 
 #[cfg(all(feature = "compress", feature = "brotli"))]
-#[test]
-fn compress_with_brotli_skippable_algorithm() {
+#[tokio::test]
+async fn compress_with_brotli_skippable_algorithm() {
     test_compression_method(&[BrotliOptions::default()
         .with_skippable_frame_size(64 * 1024)
-        .into()]);
+        .into()])
+    .await;
 }
 
 #[cfg(all(feature = "compress", feature = "bzip2"))]
-#[test]
-fn compress_with_bzip2_algorithm() {
-    test_compression_method(&[EncoderMethod::BZIP2.into()]);
+#[tokio::test]
+async fn compress_with_bzip2_algorithm() {
+    test_compression_method(&[EncoderMethod::BZIP2.into()]).await;
 }
 
 #[cfg(all(feature = "compress", feature = "deflate"))]
-#[test]
-fn compress_with_deflate_algorithm() {
-    test_compression_method(&[EncoderMethod::DEFLATE.into()]);
+#[tokio::test]
+async fn compress_with_deflate_algorithm() {
+    test_compression_method(&[EncoderMethod::DEFLATE.into()]).await;
 }
 
 #[cfg(all(feature = "compress", feature = "lz4"))]
-#[test]
-fn compress_with_lz4_algorithm() {
-    test_compression_method(&[Lz4Options::default().with_skippable_frame_size(0).into()]);
+#[tokio::test]
+async fn compress_with_lz4_algorithm() {
+    test_compression_method(&[Lz4Options::default().with_skippable_frame_size(0).into()]).await;
 }
 
 #[cfg(all(feature = "compress", feature = "lz4"))]
-#[test]
-fn compress_with_lz4_skippable_algorithm() {
+#[tokio::test]
+async fn compress_with_lz4_skippable_algorithm() {
     test_compression_method(&[Lz4Options::default()
         .with_skippable_frame_size(128 * 1024)
-        .into()]);
+        .into()])
+    .await;
 }
 
 #[cfg(all(feature = "compress", feature = "lz4"))]
-#[test]
-fn compress_with_zstd_algorithm() {
-    test_compression_method(&[EncoderMethod::ZSTD.into()]);
+#[tokio::test]
+async fn compress_with_zstd_algorithm() {
+    test_compression_method(&[EncoderMethod::ZSTD.into()]).await;
 }

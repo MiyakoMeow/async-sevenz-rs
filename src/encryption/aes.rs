@@ -437,22 +437,24 @@ mod tests {
 
     use super::*;
 
-    #[test]
-    fn test_aes_codec() {
+    #[tokio::test]
+    async fn test_aes_codec() {
         let mut encoded = vec![];
         let writer = Cursor::new(&mut encoded);
         let password: Password = "1234".into();
         let options = AesEncoderOptions::new(password.clone());
         let mut enc = Aes256Sha256Encoder::new(writer, &options).unwrap();
         let original = include_bytes!("aes.rs");
-        smol::block_on(AsyncWriteExt::write_all(&mut enc, original)).unwrap();
-        let _ = smol::block_on(AsyncWriteExt::write(&mut enc, &[])).unwrap();
+        AsyncWriteExt::write_all(&mut enc, original).await.unwrap();
+        let _ = AsyncWriteExt::write(&mut enc, &[]).await.unwrap();
 
         let cursor = Cursor::new(&encoded[..]);
         let mut dec = Aes256Sha256Decoder::new(cursor, &options.properties(), &password).unwrap();
 
         let mut decoded = vec![];
-        async_io::block_on(AsyncReadExt::read_to_end(&mut dec, &mut decoded)).unwrap();
+        AsyncReadExt::read_to_end(&mut dec, &mut decoded)
+            .await
+            .unwrap();
         assert_eq!(&decoded[..original.len()], &original[..]);
     }
 }

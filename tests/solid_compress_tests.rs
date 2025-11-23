@@ -3,33 +3,36 @@ use async_sevenz::*;
 #[cfg(feature = "compress")]
 use tempfile::*;
 #[cfg(feature = "compress")]
-#[test]
-fn compress_multi_files_solid() {
+#[tokio::test]
+async fn compress_multi_files_solid() {
     let temp_dir = tempdir().unwrap();
     let folder = temp_dir.path().join("folder");
-    smol::block_on(async_fs::create_dir(&folder)).unwrap();
+    async_fs::create_dir(&folder).await.unwrap();
     let mut files = Vec::with_capacity(100);
     let mut contents = Vec::with_capacity(100);
     for i in 1..=10000 {
         let name = format!("file{i}.txt");
         let content = format!("file{i} with content");
-        smol::block_on(async_fs::write(folder.join(&name), &content)).unwrap();
+        async_fs::write(folder.join(&name), &content).await.unwrap();
         files.push(name);
         contents.push(content);
     }
     let dest = temp_dir.path().join("folder.7z");
 
-    let mut sz = smol::block_on(ArchiveWriter::new(futures::io::Cursor::new(
-        Vec::<u8>::new(),
-    )))
-    .unwrap();
-    smol::block_on(sz.push_source_path(&folder, |_| async { true })).unwrap();
-    let cursor = smol::block_on(sz.finish()).expect("compress ok");
+    let mut sz = ArchiveWriter::new(futures::io::Cursor::new(Vec::<u8>::new()))
+        .await
+        .unwrap();
+    sz.push_source_path(&folder, |_| async { true })
+        .await
+        .unwrap();
+    let cursor = sz.finish().await.expect("compress ok");
     let data = cursor.into_inner();
-    smol::block_on(async_fs::write(&dest, data)).unwrap();
+    async_fs::write(&dest, data).await.unwrap();
 
     let decompress_dest = temp_dir.path().join("decompress");
-    smol::block_on(decompress_file(dest, &decompress_dest)).expect("decompress ok");
+    decompress_file(dest, &decompress_dest)
+        .await
+        .expect("decompress ok");
     assert!(decompress_dest.exists());
     for i in 0..files.len() {
         let name = &files[i];
@@ -37,63 +40,64 @@ fn compress_multi_files_solid() {
         let decompress_file = decompress_dest.join(name);
         assert!(decompress_file.exists());
         assert_eq!(
-            &smol::block_on(async_fs::read_to_string(&decompress_file)).unwrap(),
+            &async_fs::read_to_string(&decompress_file).await.unwrap(),
             content
         );
     }
 }
 
 #[cfg(feature = "compress")]
-#[test]
-fn compress_multi_files_mix_solid_and_non_solid() {
+#[tokio::test]
+async fn compress_multi_files_mix_solid_and_non_solid() {
     let temp_dir = tempdir().unwrap();
     let folder = temp_dir.path().join("folder");
-    smol::block_on(async_fs::create_dir(&folder)).unwrap();
+    async_fs::create_dir(&folder).await.unwrap();
     let mut files = Vec::with_capacity(100);
     let mut contents = Vec::with_capacity(100);
     for i in 1..=100 {
         let name = format!("file{i}.txt");
         let content = format!("file{i} with content");
-        smol::block_on(async_fs::write(folder.join(&name), &content)).unwrap();
+        async_fs::write(folder.join(&name), &content).await.unwrap();
         files.push(name);
         contents.push(content);
     }
     let dest = temp_dir.path().join("folder.7z");
 
-    let mut sz = smol::block_on(ArchiveWriter::new(futures::io::Cursor::new(
-        Vec::<u8>::new(),
-    )))
-    .unwrap();
+    let mut sz = ArchiveWriter::new(futures::io::Cursor::new(Vec::<u8>::new()))
+        .await
+        .unwrap();
 
     // solid compression
-    smol::block_on(sz.push_source_path(&folder, |_| async { true })).unwrap();
+    sz.push_source_path(&folder, |_| async { true })
+        .await
+        .unwrap();
 
     // non solid compression
     for i in 101..=200 {
         let name = format!("file{i}.txt");
         let content = format!("file{i} with content");
-        smol::block_on(async_fs::write(folder.join(&name), &content)).unwrap();
+        async_fs::write(folder.join(&name), &content).await.unwrap();
         files.push(name.clone());
         contents.push(content);
 
         let src = folder.join(&name);
-        let data = smol::block_on(async_fs::read(&src)).unwrap();
-        smol::block_on(async {
-            sz.push_archive_entry(
-                ArchiveEntry::from_path(&src, name).await,
-                Some(futures::io::Cursor::new(data)),
-            )
-            .await
-            .expect("ok");
-        });
+        let data = async_fs::read(&src).await.unwrap();
+        sz.push_archive_entry(
+            ArchiveEntry::from_path(&src, name).await,
+            Some(futures::io::Cursor::new(data)),
+        )
+        .await
+        .expect("ok");
     }
 
-    let cursor = smol::block_on(sz.finish()).expect("compress ok");
+    let cursor = sz.finish().await.expect("compress ok");
     let data = cursor.into_inner();
-    smol::block_on(async_fs::write(&dest, data)).unwrap();
+    async_fs::write(&dest, data).await.unwrap();
 
     let decompress_dest = temp_dir.path().join("decompress");
-    smol::block_on(decompress_file(dest, &decompress_dest)).expect("decompress ok");
+    decompress_file(dest, &decompress_dest)
+        .await
+        .expect("decompress ok");
     assert!(decompress_dest.exists());
     for i in 0..files.len() {
         let name = &files[i];
@@ -101,7 +105,7 @@ fn compress_multi_files_mix_solid_and_non_solid() {
         let decompress_file = decompress_dest.join(name);
         assert!(decompress_file.exists());
         assert_eq!(
-            &smol::block_on(async_fs::read_to_string(&decompress_file)).unwrap(),
+            &async_fs::read_to_string(&decompress_file).await.unwrap(),
             content
         );
     }

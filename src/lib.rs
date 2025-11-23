@@ -43,7 +43,7 @@
 //! let mut src = PathBuf::new();
 //! src.push("examples/data/sample.7z");
 //! let dest = tempdir().unwrap();
-//! smol::block_on(decompress_file(src, dest.path())).expect("complete");
+//! tokio::runtime::Runtime::new().unwrap().block_on(decompress_file(src, dest.path())).expect("complete");
 //! ```
 //!
 //! ## Decompress an encrypted 7z file
@@ -60,7 +60,7 @@
 //! let mut src = PathBuf::new();
 //! src.push("tests/resources/encrypted.7z");
 //! let dest = tempdir().unwrap();
-//! smol::block_on(decompress_file_with_password(src, dest.path(), "sevenz-rust".into()))
+//! tokio::runtime::Runtime::new().unwrap().block_on(decompress_file_with_password(src, dest.path(), "sevenz-rust".into()))
 //!     .expect("complete");
 //! # }
 //! ```
@@ -79,7 +79,7 @@
 //! let src = PathBuf::from("examples/data/sample");
 //! let dest_dir = tempdir().unwrap();
 //! let dest = dest_dir.path().join("sample.7z");
-//! smol::block_on(compress_to_path(src, &dest)).expect("compress ok");
+//! tokio::runtime::Runtime::new().unwrap().block_on(compress_to_path(src, &dest)).expect("compress ok");
 //! # }
 //! ```
 //!
@@ -97,7 +97,7 @@
 //! let src = PathBuf::from("examples/data/sample");
 //! let dest_dir = tempdir().unwrap();
 //! let dest = dest_dir.path().join("sample_encrypted.7z");
-//! smol::block_on(compress_to_path_encrypted(src, &dest, "sevenz-rust".into()))
+//! tokio::runtime::Runtime::new().unwrap().block_on(compress_to_path_encrypted(src, &dest, "sevenz-rust".into()))
 //!     .expect("compress ok");
 //! # }
 //! ```
@@ -109,7 +109,7 @@
 //! # {
 //! use async_sevenz::ArchiveWriter;
 //!
-//! smol::block_on(async {
+//! tokio::runtime::Runtime::new().unwrap().block_on(async {
 //!     let mut writer = ArchiveWriter::create_in_memory()
 //!         .await
 //!         .expect("create writer ok");
@@ -129,7 +129,7 @@
 //! # {
 //! use async_sevenz::{ArchiveWriter, encoder_options};
 //!
-//! smol::block_on(async {
+//! tokio::runtime::Runtime::new().unwrap().block_on(async {
 //!     let mut writer = ArchiveWriter::create_in_memory()
 //!         .await
 //!         .expect("create writer ok");

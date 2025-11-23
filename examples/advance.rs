@@ -3,13 +3,14 @@ use std::{collections::HashMap, env::temp_dir, time::Instant};
 use async_sevenz::*;
 use rand::Rng;
 
-fn main() {
+#[tokio::main]
+async fn main() {
     let temp_dir = temp_dir();
     let src = temp_dir.join("compress/advance");
     if src.exists() {
-        let _ = smol::block_on(async_fs::remove_dir_all(&src));
+        let _ = async_fs::remove_dir_all(&src).await;
     }
-    let _ = smol::block_on(async_fs::create_dir_all(&src));
+    let _ = async_fs::create_dir_all(&src).await;
     let file_count = 100;
     let mut contents = HashMap::with_capacity(file_count);
     let mut unpack_size = 0;
@@ -21,7 +22,7 @@ fn main() {
             contents.insert(format!("file{i}.txt"), c);
         }
         for (filename, content) in contents.iter() {
-            let _ = smol::block_on(async_fs::write(src.join(filename), content));
+            let _ = async_fs::write(src.join(filename), content).await;
         }
     }
     let dest = temp_dir.join("compress/compress.7z");
@@ -31,29 +32,29 @@ fn main() {
     // start to compress
     #[cfg(feature = "aes256")]
     {
-        smol::block_on(async_sevenz::compress_to_path_encrypted(
-            &src,
-            &dest,
-            Password::new("sevenz-rust"),
-        ))
-        .expect("compress ok");
+        async_sevenz::compress_to_path_encrypted(&src, &dest, Password::new("sevenz-rust"))
+            .await
+            .expect("compress ok");
     }
     #[cfg(not(feature = "aes256"))]
     {
-        smol::block_on(async_sevenz::compress_to_path(&src, &dest)).expect("compress ok");
+        async_sevenz::compress_to_path(&src, &dest)
+            .await
+            .expect("compress ok");
     }
     println!("compress took {:?}/{:?}", time.elapsed(), dest);
     if src.exists() {
-        let _ = smol::block_on(async_fs::remove_dir_all(&src));
+        let _ = async_fs::remove_dir_all(&src).await;
     }
     assert!(dest.exists());
-    let m = smol::block_on(async_fs::metadata(&dest)).unwrap();
+    let m = async_fs::metadata(&dest).await.unwrap();
     println!("src  file len:{unpack_size:?}");
     println!("dest file len:{:?}", m.len());
     println!("ratio:{:?}", m.len() as f64 / unpack_size as f64);
 
     // start to decompress
-    let mut sz = smol::block_on(ArchiveReader::open(&dest, Password::new("sevenz-rust")))
+    let mut sz = ArchiveReader::open(&dest, Password::new("sevenz-rust"))
+        .await
         .expect("create reader ok");
     assert_eq!(contents.len(), sz.archive().files.len());
     assert_eq!(1, sz.archive().blocks.len());
@@ -65,11 +66,11 @@ fn main() {
         .map(|f| f.name().to_string())
         .collect();
     for name in names {
-        let data = smol::block_on(sz.read_file(&name)).expect("read file ok");
+        let data = sz.read_file(&name).await.expect("read file ok");
         let content = String::from_utf8(data).unwrap();
         assert_eq!(content, contents[&name].to_string());
     }
-    let _ = smol::block_on(async_fs::remove_file(dest));
+    let _ = async_fs::remove_file(dest).await;
 }
 
 fn gen_random_contents(len: usize) -> String {

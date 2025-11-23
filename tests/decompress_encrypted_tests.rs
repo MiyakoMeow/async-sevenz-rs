@@ -1,10 +1,9 @@
 #[cfg(feature = "aes256")]
-#[test]
-fn test_decompress_file_with_password() {
+#[tokio::test]
+async fn test_decompress_file_with_password() {
     use std::{fs::read_to_string, path::PathBuf};
 
     use async_sevenz::decompress_file_with_password;
-    use smol;
     use tempfile::tempdir;
 
     let mut source_file = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
@@ -13,11 +12,8 @@ fn test_decompress_file_with_password() {
     let target = temp_dir.path().to_path_buf();
     let mut file1_path = target.clone();
     file1_path.push("encripted/7zFormat.txt");
-    let r = smol::block_on(decompress_file_with_password(
-        source_file,
-        target.as_path(),
-        "sevenz-rust".into(),
-    ));
+    let r =
+        decompress_file_with_password(source_file, target.as_path(), "sevenz-rust".into()).await;
     assert!(r.is_ok());
     assert!(
         read_to_string(file1_path)

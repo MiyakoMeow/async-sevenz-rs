@@ -10,14 +10,13 @@ use async_sevenz::{Archive, BlockDecoder, Password};
 //    Brotli, LZ4 and ZSTD could we supported in the future, if there is ever demand to do so.
 //
 //    See `ArchiveReader::set_thread_count()` for more information.`
-fn main() {
+#[tokio::main]
+async fn main() {
     let time = std::time::Instant::now();
     let password = Password::empty();
-    let archive = smol::block_on(Archive::open_with_password(
-        "examples/data/sample.7z",
-        &password,
-    ))
-    .unwrap();
+    let archive = Archive::open_with_password("examples/data/sample.7z", &password)
+        .await
+        .unwrap();
     let block_count = archive.blocks.len();
     if block_count <= 1 {
         println!("block count less than 1, use single thread");
@@ -28,13 +27,13 @@ fn main() {
     let mut threads = Vec::new();
 
     // 1. We multi-thread by decompressing each block itself in parallel.
-    let data = smol::block_on(afs::read("examples/data/sample.7z")).unwrap();
+    let data = afs::read("examples/data/sample.7z").await.unwrap();
     for block_index in 0..block_count {
         let archive = archive.clone();
         let password = password.clone();
         let data = data.clone();
 
-        let handle = std::thread::spawn(move || {
+        let handle = tokio::spawn(async move {
             let mut source = futures::io::Cursor::new(data);
 
             // 2. For decoders that supports it, we can set the thread_count on the block decoder
@@ -43,21 +42,23 @@ fn main() {
             let block_decoder = BlockDecoder::new(4, block_index, &archive, &password, &mut source);
 
             let dest = PathBuf::from("examples/data/sample_mt/");
-            smol::block_on(block_decoder.for_each_entries(&mut |entry, reader| {
-                let dest = dest.join(entry.name());
-                Box::pin(async move {
-                    async_sevenz::default_entry_extract_fn(entry, reader, &dest).await?;
-                    Ok(true)
+            block_decoder
+                .for_each_entries(&mut |entry, reader| {
+                    let dest = dest.join(entry.name());
+                    Box::pin(async move {
+                        async_sevenz::default_entry_extract_fn(entry, reader, &dest).await?;
+                        Ok(true)
+                    })
                 })
-            }))
-            .expect("ok");
+                .await
+                .expect("ok");
         });
         threads.push(handle);
     }
 
-    threads
-        .into_iter()
-        .for_each(|handle| handle.join().unwrap());
+    for handle in threads {
+        handle.await.unwrap();
+    }
 
     println!(
         "multi-thread decompress took {:?} ms",

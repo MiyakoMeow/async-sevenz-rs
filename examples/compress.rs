@@ -3,7 +3,8 @@ use std::{env, time::Instant};
 use async_fs as afs;
 use async_sevenz::{ArchiveReader, ArchiveWriter, Password};
 
-fn main() {
+#[tokio::main]
+async fn main() {
     let args: Vec<String> = env::args().collect();
 
     if args.len() < 2 {
@@ -54,31 +55,36 @@ fn main() {
 
     let now = Instant::now();
 
-    let mut writer = smol::block_on(ArchiveWriter::new(futures::io::Cursor::new(
-        Vec::<u8>::new(),
-    )))
-    .unwrap_or_else(|error| panic!("Failed to create archive '{output_path}': {error}"));
+    let mut writer = ArchiveWriter::new(futures::io::Cursor::new(Vec::<u8>::new()))
+        .await
+        .unwrap_or_else(|error| panic!("Failed to create archive '{output_path}': {error}"));
 
     if solid {
         for file_path in &file_paths {
-            smol::block_on(writer.push_source_path(file_path, |_| async { true }))
+            writer
+                .push_source_path(file_path, |_| async { true })
+                .await
                 .expect("Failed to push source path");
             println!("Added path: {file_path}");
         }
     } else {
         for file_path in &file_paths {
-            smol::block_on(writer.push_source_path_non_solid(file_path, |_| async { true }))
+            writer
+                .push_source_path_non_solid(file_path, |_| async { true })
+                .await
                 .expect("Failed to push source path");
             println!("Added path: {file_path}");
         }
     }
 
-    let cursor = smol::block_on(writer.finish()).expect("Failed to finalize archive");
+    let cursor = writer.finish().await.expect("Failed to finalize archive");
     let data = cursor.into_inner();
-    smol::block_on(afs::write(&output_path, data))
+    afs::write(&output_path, data)
+        .await
         .unwrap_or_else(|error| panic!("Failed to write output file '{output_path}': {error}"));
 
-    let _archive_reader = smol::block_on(ArchiveReader::open(&output_path, Password::empty()))
+    let _archive_reader = ArchiveReader::open(&output_path, Password::empty())
+        .await
         .unwrap_or_else(|error| panic!("Failed to open output file '{output_path}': {error}"));
 
     println!("Archive created: {output_path}");
