@@ -9,7 +9,7 @@ name = "async-sevenz"
 readme = "README.md"
 repository = "https://github.com/MiyakoMeow/async-sevenz-rs"
 rust-version = "1.85"
-version = "0.0.2"
+version = "0.0.3"
 
 [lib]
 crate-type = ["cdylib", "rlib"]

@@ -1,5 +1,15 @@
 # Changelog
 
+## [0.0.3](https://github.com/MiyakoMeow/async-sevenz-rs/compare/v0.0.2...v0.0.3) (2025-11-23)
+
+
+### Bug Fixes
+
+* **manifest:** del futures ([e8e4602](https://github.com/MiyakoMeow/async-sevenz-rs/commit/e8e4602c7b9589b8707af4574d5281a130dc307a))
+* **test:** switch to tokio ([ff7d908](https://github.com/MiyakoMeow/async-sevenz-rs/commit/ff7d9087951878bf906110d3c6683b2d3f0d2350))
+* **test:** use tokio::main in doc example ([d9528e8](https://github.com/MiyakoMeow/async-sevenz-rs/commit/d9528e8aa210e6fe1ce0a43e135f46db9d98f502))
+* use ([8ae9497](https://github.com/MiyakoMeow/async-sevenz-rs/commit/8ae94978e983708f0f8dd7bf10c3839b379a5772))
+
 ## 0.0.2 (2025-11-22)
 
 
