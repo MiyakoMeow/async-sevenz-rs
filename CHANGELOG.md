@@ -1,6 +1,12 @@
 # Changelog
 
-## [0.0.3](https://github.com/MiyakoMeow/async-sevenz-rs/compare/v0.0.2...v0.0.3) (2025-11-23)
+All notable changes to this project will be documented in this file.
+
+The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
+and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
+
+## [Unreleased]
+## [0.0.3](https://github.com/MiyakoMeow/async-sevenz-rs/compare/v0.0.2...v0.0.3) - 2025-11-23
 
 
 ### Bug Fixes
@@ -10,12 +16,14 @@
 * **test:** use tokio::main in doc example ([d9528e8](https://github.com/MiyakoMeow/async-sevenz-rs/commit/d9528e8aa210e6fe1ce0a43e135f46db9d98f502))
 * use ([8ae9497](https://github.com/MiyakoMeow/async-sevenz-rs/commit/8ae94978e983708f0f8dd7bf10c3839b379a5772))
 
-## 0.0.2 (2025-11-22)
+
+## [0.0.2](https://github.com/MiyakoMeow/async-sevenz-rs/compare/v0.0.1...v0.0.2) - 2025-11-22
 
 
 ### ⚠ BREAKING CHANGES
 
 * Rename identifiers to follow Rust API Guidelines
+
 
 ### Features
 
@@ -31,7 +39,7 @@
 
 ### Bug Fixes
 
-* **ci/rust:** use cache in all steps ([da11c2a](https://github.com/MiyakoMeow/async-sevenz-rs/commit/da11c2a96a1d702055b1c7d9c74b9026fdb8accf))
+* **ci/rust:** use cache in all steps ([da11c2a](https://github.com/MiyakoMeow/async-sevenz-rs/commit/da11c2a961d702055b1c7d9c74b9026fdb8accf))
 * **ci:** disable wasm check ([1106856](https://github.com/MiyakoMeow/async-sevenz-rs/commit/1106856b2a1c55e548af496c36d90431ec3c6aba))
 * clippy ([ee8e17f](https://github.com/MiyakoMeow/async-sevenz-rs/commit/ee8e17fb13f7d7149a6b5b4f77b82cf974aa03ea))
 * **docs:** fix README deps ([4e9abde](https://github.com/MiyakoMeow/async-sevenz-rs/commit/4e9abde0f694d9fab4329e5cfbae52d5bb63047b))
