@@ -100,7 +100,7 @@ jobs:
         with:
           cache-on-failure: true
       - name: Cache build artifacts
-        uses: Swatinem/rust-cache@v2.8.1
+        uses: Swatinem/rust-cache@v2.8.2
       - name: Check code formatted
         run: cargo fmt --all -- --check
 
